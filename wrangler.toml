@@ -1,17 +1,31 @@
-name = "hvac-survey"
-compatibility_date = "2026-01-01"
-pages_build_output_dir = "public"
+# hvac-survey —— Cloudflare Worker（Worker 脚本 + 静态资源 + D1 + R2）
+#
+# 说明：Cloudflare 新版控制台把 Git 仓库统一建成 Worker，不再新建 Pages 项目，
+#       也不再自动编译 functions/ 目录。因此后端已合并为单个入口脚本 worker/index.js，
+#       原来 Pages 的「Build output directory」改由 [assets].directory 承担。
 
-# D1 绑定：database_id 请替换为 `wrangler d1 create survey-db` 输出的值
+name = "hvac-survey"
+compatibility_date = "2026-09-28"
+main = "./worker/index.js"
+
+# 静态资源目录（原 Pages 的构建输出目录）
+[assets]
+directory = "public"
+# 由 Worker 先接管请求：/api/* 走接口，其余再回落到静态资源
+run_worker_first = true
+binding = "ASSETS"
+
+# D1 绑定：问卷数据
 [[d1_databases]]
 binding = "DB"
 database_name = "survey-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "4ebe42e0-a3b0-4c33-a0f3-141a9ea61c71"
 
-# R2 绑定：存放身份证照片，桶名可改，绑定名必须为 IDCARDS
+# R2 绑定：身份证照片
 [[r2_buckets]]
 binding = "IDCARDS"
 bucket_name = "survey-idcards"
-# 建议部署后在 Cloudflare 控制台 → Pages 项目 → Settings → Environment variables 覆盖此项
+
+# 管理员口令（后台查看 / 导出答卷用）
 [vars]
-ADMIN_TOKEN = "change-me-2026"
+ADMIN_TOKEN = "hvac-survey-2026-7kd2"

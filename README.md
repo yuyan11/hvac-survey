@@ -1,7 +1,12 @@
 # 入职与技能考察登记表
 
-单页问卷系统，运行在 Cloudflare：Pages 静态页 + Pages Functions + D1 数据库 + R2 照片存储。
+单页问卷系统，运行在 Cloudflare：**Worker（统一入口脚本）+ 静态资源 + D1 数据库 + R2 照片存储**。
 入职登记与中央空调安装技能考察合并为**一份连续表单**，一次填完、一次提交。
+
+> 2026-09 更新：Cloudflare 新版控制台把 Git 仓库统一建成 **Worker**，不再新建 Pages 项目，
+> 也不会自动编译 `functions/` 目录。因此后端已合并为单个入口 `worker/index.js`，
+> Pages 的「Build output directory」改由 `wrangler.toml` 里的 `[assets].directory` 承担。
+> `functions/api/` 保留作历史参考，**运行时不再使用**。
 
 ## 目录结构
 
@@ -15,13 +20,15 @@ survey/
 │   ├── app.js               # 渲染引擎：条件分支、校验、提交、照片上传
 │   ├── admin.js             # 后台：列表 / 详情 / 看身份证照片 / 导出 CSV 与 JSON
 │   └── styles.css
-├── functions/api/           # Pages Functions（后端接口）
+├── worker/
+│   └── index.js             # Worker 统一入口：/api/* 走接口，其余回落到静态资源
+├── functions/api/           # 【已停用，仅作参考】原 Pages Functions
 │   ├── submit.js            # POST /api/submit   答卷写入 D1
 │   ├── upload.js            # POST /api/upload   身份证照片写入 R2
 │   ├── results.js           # GET  /api/results  管理员读取答卷
 │   └── photo.js             # GET  /api/photo    管理员读取身份证照片
 ├── schema.sql               # D1 建表语句
-└── wrangler.toml            # D1 / R2 绑定 + 管理员口令
+└── wrangler.toml            # 入口 / 静态资源目录 / D1 + R2 绑定 / 管理员口令
 ```
 
 ## 表单内容（20 组 / 111 题）
@@ -103,40 +110,45 @@ CREATE INDEX IF NOT EXISTS idx_submissions_created ON submissions (created_at DE
 2. Name 填 `survey-idcards` → Create bucket
 3. 不用开公开访问，照片通过带口令的接口读取
 
-## 第 4 步：Cloudflare Pages 连接 GitHub
+## 第 4 步：Cloudflare Worker 连接 GitHub（Workers Builds）
 
-1. 控制台 → 左侧 `Workers & Pages` → Create → 切到 `Pages` 标签 → `Connect to Git`
-2. 选 GitHub → 授权 → 选中 `hvac-survey` 仓库 → Begin setup
-3. 构建配置按下表填：
+1. 控制台 → 左侧 `Workers & Pages` → `Create application` → `Continue with GitHub`
+2. 首次会跳 GitHub：登录 → `Install & Authorize` 授权 **Cloudflare Workers and Pages**
+3. 回到控制台选仓库 `hvac-survey` → `下一步`
+4. 「设置您的应用程序」按下表填：
 
 | 项目 | 填什么 |
 |---|---|
-| Project name | `hvac-survey` |
-| Production branch | `main` |
-| Framework preset | **None** |
-| Build command | **留空** |
-| Build output directory | **`public`** |
-| Root directory | 留空（不要填 `/`，仓库根目录即可） |
+| 项目名称 | `hvac-survey`（**必须和 wrangler.toml 里的 name 一致，否则构建失败**） |
+| 构建命令 | **留空** |
+| 部署命令 | 默认 `npx wrangler deploy`，保持不动 |
+| 预览命令 | 留空 |
+| 启用预览构建 | 可关掉，省构建时长 |
+| 路径（高级设置） | 留空（仓库根目录） |
 
-4. 点 Save and Deploy，等 1 分钟左右完成，会得到域名 `https://hvac-survey.pages.dev`。
+5. 点 **部署**，等 1–2 分钟，会得到域名 `https://hvac-survey.<你的子域>.workers.dev`。
 
-> 注意：Build output directory 必须是 `public`，否则 `/api/*` 接口不会被部署，提交会报 404。
+> 关键：`[assets].directory = "public"` 必须指向 `public`，否则页面打不开；
+> `run_worker_first = true` 保证 `/api/*` 由 Worker 接管、其余再回落到静态资源。
 
 ## 第 5 步：绑定数据库与存储
 
-进项目 → `Settings` → `Functions` 区域：
+绑定已写在 `wrangler.toml`（随代码一起部署），控制台只需确认：
 
-1. **D1 database bindings** → Add：Variable name 填 **`DB`**，D1 Database 选 `survey-db`
-2. **R2 bucket bindings** → Add：Variable name 填 **`IDCARDS`**，R2 Bucket 选 `survey-idcards`
-3. 同页 `Environment variables` → Add：Variable name 填 **`ADMIN_TOKEN`**，Value 填你自己的查看口令（别用默认的 `change-me-2026`）
+进项目 → `Settings` → `Bindings`：
+
+1. **D1 database bindings**：Variable name **`DB`** → `survey-db`
+2. **R2 bucket bindings**：Variable name **`IDCARDS`** → `survey-idcards`
+3. `Settings` → `Variables and Secrets`：**`ADMIN_TOKEN`** → 改成你自己的查看口令
 
 > 三个名字 `DB` / `IDCARDS` / `ADMIN_TOKEN` 必须分毫不差，代码里是写死的。
-> 改完绑定要点一次 **Redeploy**（Deployments → 最新一次 → Retry deployment / Redeploy）才会生效。
+> 改完绑定要点一次 **Retry deployment / 重新部署** 才会生效。
+> 注意：控制台里改的变量会被 `wrangler.toml` 的 `[vars]` 覆盖，改长期值请改 `wrangler.toml` 后推 GitHub。
 
 ## 第 6 步：验收
 
-1. 打开 `https://hvac-survey.pages.dev` → 填一份测试答卷并提交，应显示"提交成功 + 编号"
-2. 打开 `https://hvac-survey.pages.dev/admin.html` → 输入 `ADMIN_TOKEN` → 应能看到刚才那条、能点开详情、能看到身份证照片
+1. 打开 `https://hvac-survey.<子域>.workers.dev` → 填一份测试答卷并提交，应显示"提交成功 + 编号"
+2. 打开同域名 `/admin.html` → 输入 `ADMIN_TOKEN` → 应能看到刚才那条、能点开详情、能看到身份证照片
 3. 点"导出 CSV"和"导出 JSON"各试一次
 
 ---
@@ -149,7 +161,7 @@ npx wrangler d1 create survey-db            # 复制输出里的 database_id
 npx wrangler r2 bucket create survey-idcards
 # 把 database_id 填进 wrangler.toml，并改掉 ADMIN_TOKEN
 npx wrangler d1 execute survey-db --file=./schema.sql --remote
-npx wrangler pages deploy public --project-name=hvac-survey
+npx wrangler deploy
 ```
 
 ## API Token（给我帮你部署时才需要）
@@ -188,4 +200,4 @@ cd public && python -m http.server 8000
 # 打开 http://localhost:8000
 ```
 
-本地预览下 `/api/*` 不存在，提交会报错，属正常现象；部署到 Cloudflare 后由 Functions 接管。
+本地预览下 `/api/*` 不存在，提交会报错，属正常现象；部署到 Cloudflare 后由 Worker 接管。
