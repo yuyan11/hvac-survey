@@ -1,0 +1,17 @@
+name = "hvac-survey"
+compatibility_date = "2026-01-01"
+pages_build_output_dir = "public"
+
+# D1 绑定：database_id 请替换为 `wrangler d1 create survey-db` 输出的值
+[[d1_databases]]
+binding = "DB"
+database_name = "survey-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# R2 绑定：存放身份证照片，桶名可改，绑定名必须为 IDCARDS
+[[r2_buckets]]
+binding = "IDCARDS"
+bucket_name = "survey-idcards"
+# 建议部署后在 Cloudflare 控制台 → Pages 项目 → Settings → Environment variables 覆盖此项
+[vars]
+ADMIN_TOKEN = "change-me-2026"
