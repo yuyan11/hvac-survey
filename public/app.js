@@ -183,9 +183,9 @@
   /* 返回 {ok:false, msg} 表示拒收；{ok:true, warn} 表示通过（warn 为提示语） */
   function vetPhoto(kind, m) {
     if (m.long < 420) return { ok: false, msg: '照片太小太糊，请靠近拍清楚一点' };
-    if (m.sd < 10) return { ok: false, msg: '画面几乎是一片空白，请对准要拍的东西重拍' };
     if (m.mean < 30) return { ok: false, msg: '太黑了看不清，请在光线好的地方重拍' };
     if (m.mean > 246) return { ok: false, msg: '画面过曝/反光严重，换个角度重拍' };
+    if (m.sd < 10) return { ok: false, msg: '画面几乎是一片空白，请对准要拍的东西重拍' };
 
     if (kind === 'idcard') {
       // 身份证是横向的（85.6×54mm，约 1.59:1）；竖着拍基本都是拍错了
@@ -200,7 +200,7 @@
 
     if (kind === 'face') {
       if (m.long < 500) return { ok: false, msg: '自拍照太小，请靠近一点拍' };
-      if (m.ratio > 2.2) return { ok: false, msg: '请竖着拍半身照，别拍成横的' };
+      if (m.ratio > 1.5) return { ok: false, msg: '请竖着手机拍半身照，别横着拍' };
       if (m.ratio < 0.45) return { ok: false, msg: '画面太窄长，请退后一点拍半身' };
     }
 
