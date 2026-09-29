@@ -153,6 +153,10 @@
         }
         const v = d[f.name];
         if (v == null || v === '' || (Array.isArray(v) && !v.length)) return '';
+        // 照片字段只记录 true/false，详情里已单独展示图片，这里给个可读说法
+        if (f.type === 'photo') {
+          return `<div class="kv"><div>${esc(f.label)}</div><div>${v === true ? '已上传' : esc(fmt(v))}</div></div>`;
+        }
         return `<div class="kv"><div>${esc(f.label)}</div><div>${esc(fmt(v))}</div></div>`;
       }).filter(Boolean);
       if (!items.length) return;
