@@ -28,11 +28,19 @@ const PART_ENTRY = [
       },
       {
         name: 'idcard_front', label: '身份证 · 人像面', type: 'photo', side: 'front', required: true,
-        hint: '可拍照或从相册选择，自动压缩后上传，仅管理员可见',
+        hint: '请横向、正对身份证拍摄，四角完整；自动压缩后上传，仅管理员可见',
+        check: 'idcard',
       },
       {
         name: 'idcard_back', label: '身份证 · 国徽面', type: 'photo', side: 'back',
-        hint: '选填',
+        hint: '选填。同样请横向正对拍摄',
+        check: 'idcard',
+      },
+      {
+        name: 'selfie', label: '本人自拍照（正面半身）', type: 'photo', side: 'selfie',
+        camera: 'user', required: true,
+        hint: '请拍本人正面半身照（面部清晰），用于核对是否为本人；仅管理员可见',
+        check: 'face',
       },
       { name: 'live_addr', label: '现居住地址', type: 'text', required: true },
       { name: 'is_local', label: '是否在本地长期居住', type: 'radio', options: ['是', '否，可随项目流动'] },

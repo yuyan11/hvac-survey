@@ -118,7 +118,8 @@ async function upload(request, env) {
   const file = form.get('file');
 
   if (!/^\d{1,12}$/.test(id)) return json({ ok: false, error: '问卷编号无效' }, 400);
-  if (side !== 'front' && side !== 'back') return json({ ok: false, error: '照片面别无效' }, 400);
+  // front=身份证人像面 back=国徽面 selfie=本人自拍照
+  if (!['front', 'back', 'selfie'].includes(side)) return json({ ok: false, error: '照片类型无效' }, 400);
   if (!file || typeof file === 'string') return json({ ok: false, error: '未收到图片' }, 400);
   if (!/^image\//.test(file.type || '')) return json({ ok: false, error: '仅支持图片文件' }, 400);
   if (file.size > 8 * 1024 * 1024) return json({ ok: false, error: '图片超过 8MB' }, 400);
@@ -146,7 +147,7 @@ async function photo(request, env) {
 
   const id = String(url.searchParams.get('id') || '');
   const side = String(url.searchParams.get('side') || '');
-  if (!/^\d{1,12}$/.test(id) || (side !== 'front' && side !== 'back')) {
+  if (!/^\d{1,12}$/.test(id) || !['front', 'back', 'selfie'].includes(side)) {
     return new Response('参数无效', { status: 400 });
   }
 

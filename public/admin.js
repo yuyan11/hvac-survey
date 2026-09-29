@@ -132,14 +132,16 @@
       </div>`;
     }
 
-    if (d.idcard_front || d.idcard_back) {
-      html += `<h3>身份证照片</h3><div class="idcardimgs">`;
-      if (d.idcard_front) {
-        html += `<figure><img src="/api/photo?token=${encodeURIComponent(token)}&id=${it.id}&side=front" alt="人像面"><figcaption>人像面</figcaption></figure>`;
-      }
-      if (d.idcard_back) {
-        html += `<figure><img src="/api/photo?token=${encodeURIComponent(token)}&id=${it.id}&side=back" alt="国徽面"><figcaption>国徽面</figcaption></figure>`;
-      }
+    const imgs = [
+      ['front', '身份证 · 人像面', d.idcard_front],
+      ['back', '身份证 · 国徽面', d.idcard_back],
+      ['selfie', '本人自拍照', d.selfie],
+    ].filter(x => x[2]);
+    if (imgs.length) {
+      html += `<h3>照片</h3><div class="idcardimgs">`;
+      imgs.forEach(([side, label]) => {
+        html += `<figure><img src="/api/photo?token=${encodeURIComponent(token)}&id=${it.id}&side=${side}" alt="${esc(label)}"><figcaption>${esc(label)}</figcaption></figure>`;
+      });
       html += `</div>`;
     }
 

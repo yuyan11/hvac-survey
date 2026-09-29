@@ -66,10 +66,11 @@
       }
 
       case 'photo': {
+        const cam = f.camera === 'user' ? 'user' : 'environment';
         ctrl = `<div class="photobox" data-name="${f.name}" data-side="${f.side || 'front'}">
           <div class="photobtns">
             <label class="pbtn">选择照片<input type="file" accept="image/*" hidden></label>
-            <label class="pbtn">拍照上传<input type="file" accept="image/*" capture="environment" hidden></label>
+            <label class="pbtn">${cam === 'user' ? '自拍' : '拍照'}上传<input type="file" accept="image/*" capture="${cam}" hidden></label>
           </div>
           <div class="preview">${photoPreview(f.name)}</div>
         </div>`;
@@ -102,7 +103,8 @@
   function photoPreview(name) {
     const f = state.files[name];
     if (!f) return '<span class="ph">未上传</span>';
-    return `<img src="${f.url}" alt="身份证照片">
+    const label = (findField(name) || {}).label || '照片';
+    return `<img src="${f.url}" alt="${esc(label)}">
       <span class="phsize">${(f.size / 1024).toFixed(0)} KB</span>
       <button type="button" class="delphoto">删除</button>`;
   }
@@ -145,22 +147,108 @@
     } catch (e) { return ''; }
   }
 
+  /* ---------- 照片体检：判断「像不像」该拍的东西 ----------
+   * 说明：这是纯前端的启发式判断（长宽比、清晰度、亮度、画面是否空白），
+   * 不是 OCR 识别，无法保证一定就是身份证。真要核对身份证号需要接 OCR 接口。
+   */
+  function inspectImage(blob) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const w = img.naturalWidth, h = img.naturalHeight;
+        const S = 64;
+        const cv = document.createElement('canvas');
+        cv.width = S; cv.height = S;
+        const cx = cv.getContext('2d');
+        cx.drawImage(img, 0, 0, S, S);
+        let data;
+        try { data = cx.getImageData(0, 0, S, S).data; }
+        catch (e) { return resolve({ w: w, h: h, ratio: w / h, mean: 128, sd: 99 }); }
+        let sum = 0, sum2 = 0, n = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const g = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          sum += g; sum2 += g * g; n += 1;
+        }
+        const mean = sum / n;
+        const sd = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
+        resolve({ w: w, h: h, ratio: w / h, mean: mean, sd: sd, long: Math.max(w, h), short: Math.min(w, h) });
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片无法读取')); };
+      img.src = url;
+    });
+  }
+
+  /* 返回 {ok:false, msg} 表示拒收；{ok:true, warn} 表示通过（warn 为提示语） */
+  function vetPhoto(kind, m) {
+    if (m.long < 420) return { ok: false, msg: '照片太小太糊，请靠近拍清楚一点' };
+    if (m.sd < 10) return { ok: false, msg: '画面几乎是一片空白，请对准要拍的东西重拍' };
+    if (m.mean < 30) return { ok: false, msg: '太黑了看不清，请在光线好的地方重拍' };
+    if (m.mean > 246) return { ok: false, msg: '画面过曝/反光严重，换个角度重拍' };
+
+    if (kind === 'idcard') {
+      // 身份证是横向的（85.6×54mm，约 1.59:1）；竖着拍基本都是拍错了
+      if (m.ratio < 1.15) return { ok: false, msg: '身份证要横着拍，请横过手机正对身份证重拍' };
+      if (m.ratio > 2.7) return { ok: false, msg: '画面太窄长，请正对身份证、让它占满画面' };
+      if (m.long < 700) return { ok: false, msg: '身份证照片太小，请靠近拍，让卡片占满画面' };
+      if (m.sd < 18) return { ok: false, msg: '画面太平，不像身份证（上面有文字和图案），请重拍' };
+      if (m.ratio < 1.25 || m.ratio > 2.15) {
+        return { ok: true, warn: '已保存，但建议正对身份证拍满画面，方便核对' };
+      }
+    }
+
+    if (kind === 'face') {
+      if (m.long < 500) return { ok: false, msg: '自拍照太小，请靠近一点拍' };
+      if (m.ratio > 2.2) return { ok: false, msg: '请竖着拍半身照，别拍成横的' };
+      if (m.ratio < 0.45) return { ok: false, msg: '画面太窄长，请退后一点拍半身' };
+    }
+
+    return { ok: true };
+  }
+
   async function handlePhoto(name, file) {
     if (!file) return;
     if (!/^image\//.test(file.type)) { toast('请选择图片文件'); return; }
     if (file.size > 20 * 1024 * 1024) { toast('图片过大，请换一张'); return; }
+
+    const f = findField(name) || {};
+    const kind = f.check || 'none';
+
     toast('正在处理图片…');
     try {
       const blob = await compressImage(file, 1600, 0.85);
+      const m = await inspectImage(blob);
+      const r = vetPhoto(kind, m);
+
+      const fieldEl = document.querySelector(`.field[data-field="${name}"]`);
+      const errEl = fieldEl ? fieldEl.querySelector('.err') : null;
+      if (!r.ok) {
+        if (fieldEl) fieldEl.classList.add('bad');
+        if (errEl) errEl.textContent = r.msg;
+        toast(r.msg);
+        return;
+      }
+      if (fieldEl) fieldEl.classList.remove('bad');
+      if (errEl) errEl.textContent = r.warn || '';
+
       if (state.files[name] && state.files[name].url) URL.revokeObjectURL(state.files[name].url);
       state.files[name] = { blob: blob, url: URL.createObjectURL(blob), size: blob.size };
       refreshPhoto(name);
-      document.querySelector(`.field[data-field="${name}"]`).classList.remove('bad');
-      document.querySelector(`.field[data-field="${name}"] .err`).textContent = '';
       toast('');
     } catch (e) {
       toast('图片处理失败：' + e.message);
     }
+  }
+
+  function findField(name) {
+    const forms = window.FORMS || [];
+    for (const fm of forms) {
+      for (const g of (fm.groups || [])) {
+        for (const f of (g.fields || [])) if (f.name === name) return f;
+      }
+    }
+    return null;
   }
 
   /* ---------- 渲染整份表单 ---------- */
@@ -452,11 +540,12 @@
 
     let done = 0, fail = 0;
     for (const name of names) {
-      const side = name.indexOf('back') > -1 ? 'back' : 'front';
+      const f = findField(name) || {};
+      const side = f.side || (name.indexOf('back') > -1 ? 'back' : 'front');
       const fd = new FormData();
       fd.append('id', String(id));
       fd.append('side', side);
-      fd.append('file', state.files[name].blob, `idcard-${side}.jpg`);
+      fd.append('file', state.files[name].blob, `${side}-${id}.jpg`);
       try {
         const r = await fetch('/api/upload', { method: 'POST', body: fd });
         const j = await r.json();
