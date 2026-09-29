@@ -8,6 +8,21 @@
 > Pages 的「Build output directory」改由 `wrangler.toml` 里的 `[assets].directory` 承担。
 > `functions/api/` 保留作历史参考，**运行时不再使用**。
 
+## 线上地址
+
+| 用途 | 地址 |
+|---|---|
+| 问卷（发给工人填） | **https://survey.199118.xyz** |
+| 后台（你自己看结果） | **https://survey.199118.xyz/admin.html** |
+| 备用（国内多数网络打不开） | https://hvac-survey.yu19991.workers.dev |
+
+> ⚠️ **`*.workers.dev` 在国内基本不通**，对外发链接一律用 `survey.199118.xyz`。
+> 该域名是 Cloudflare Workers 的「自定义域」，DNS 记录由控制台自动创建（已代理/橙云）。
+> 要改子域名：Worker → `域` → 添加域名（或删掉重建）。
+>
+> 绑定关系：`survey.199118.xyz` → Worker `hvac-survey`（生产环境）。前端全部用相对路径
+> `/api/...`，所以换域名不需要改任何代码。
+
 ## 目录结构
 
 ```
