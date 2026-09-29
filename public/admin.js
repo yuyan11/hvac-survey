@@ -144,20 +144,22 @@
     }
 
     (groups ? groups.groups : []).forEach(g => {
+      // 注意：这里是「标签, 值」交替的扁平结构，外层 .kv 负责两列网格；
+      // 不要再给每一行套 .kv，否则会嵌套成网格把标签挤成一字一行。
       const items = g.fields.map(f => {
         if (f.type === 'rows') {
           const rows = Array.isArray(d[f.name]) ? d[f.name] : [];
           if (!rows.length) return '';
-          return `<div class="kv"><div>${esc(f.label)}</div><div>${
-            rows.map(r => Object.keys(r).map(k => fmt(r[k])).filter(Boolean).join(' / ')).join('；')}</div></div>`;
+          return `<div>${esc(f.label)}</div><div>${
+            rows.map(r => Object.keys(r).map(k => fmt(r[k])).filter(Boolean).join(' / ')).join('；')}</div>`;
         }
         const v = d[f.name];
         if (v == null || v === '' || (Array.isArray(v) && !v.length)) return '';
         // 照片字段只记录 true/false，详情里已单独展示图片，这里给个可读说法
         if (f.type === 'photo') {
-          return `<div class="kv"><div>${esc(f.label)}</div><div>${v === true ? '已上传' : esc(fmt(v))}</div></div>`;
+          return `<div>${esc(f.label)}</div><div>${v === true ? '已上传' : esc(fmt(v))}</div>`;
         }
-        return `<div class="kv"><div>${esc(f.label)}</div><div>${esc(fmt(v))}</div></div>`;
+        return `<div>${esc(f.label)}</div><div>${esc(fmt(v))}</div>`;
       }).filter(Boolean);
       if (!items.length) return;
       html += `<h3>${esc(g.title)}</h3><div class="kv">${items.join('')}</div>`;

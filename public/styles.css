@@ -309,8 +309,11 @@ th { background: #f7f9fc; font-weight: 600; position: sticky; top: 0; }
 tr:hover td { background: #fafbfe; }
 .detail { max-width: 780px; }
 .detail h3 { margin: 18px 0 8px; font-size: 15px; }
-.kv { display: grid; grid-template-columns: 190px 1fr; gap: 6px 12px; font-size: 13.5px; }
+.kv { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 8px 16px; font-size: 13.5px; align-items: start; }
 .kv div:nth-child(odd) { color: var(--dim); }
+.kv div:nth-child(even) { min-width: 0; overflow-wrap: anywhere; line-height: 1.7; }
+.kv div:nth-child(odd) { line-height: 1.7; }
+.detail .kv + h3 { margin-top: 24px; }
 .empty { padding: 30px; text-align: center; color: var(--dim); }
 .mask { background: #fffbe9; }
 .linkbtn { background: none; border: 0; color: var(--brand); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
@@ -320,5 +323,5 @@ tr:hover td { background: #fafbfe; }
   .tab { font-size: 13px; padding: 10px 4px; }
   .group { padding: 14px; }
   .row { grid-template-columns: 1fr auto; }
-  .kv { grid-template-columns: 130px 1fr; }
+  .kv { grid-template-columns: 104px minmax(0, 1fr); gap: 8px 12px; }
 }

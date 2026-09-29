@@ -112,7 +112,7 @@
     if (box) box.querySelector('.preview').innerHTML = photoPreview(name);
   }
 
-  function compressImage(file, maxSide, quality, stamp) {
+  function compressImage(file, maxSide, quality) {
     return new Promise((resolve, reject) => {
       const fr = new FileReader();
       fr.onerror = () => reject(new Error('文件读取失败'));
@@ -129,34 +129,12 @@
           cx.fillStyle = '#fff';
           cx.fillRect(0, 0, w, h);
           cx.drawImage(img, 0, 0, w, h);
-
-          if (stamp) {
-            const fs = Math.max(14, Math.round(w / 38));
-            const pad = Math.round(fs * 0.7);
-            cx.font = '500 ' + fs + 'px -apple-system, "PingFang SC", sans-serif';
-            const tw = cx.measureText(stamp).width;
-            const bx = w - tw - pad * 1.6;
-            const by = h - fs - pad * 1.6;
-            cx.fillStyle = 'rgba(0,0,0,0.45)';
-            cx.fillRect(bx - pad * 0.4, by - pad * 0.3, tw + pad * 1.6, fs + pad * 1.4);
-            cx.fillStyle = '#fff';
-            cx.textBaseline = 'top';
-            cx.fillText(stamp, bx, by);
-          }
-
           cv.toBlob(b => b ? resolve(b) : reject(new Error('图片压缩失败')), 'image/jpeg', quality);
         };
         img.src = fr.result;
       };
       fr.readAsDataURL(file);
     });
-  }
-
-  function timeStamp() {
-    const d = new Date();
-    const p = n => String(n).padStart(2, '0');
-    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
-      ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
 
   /* 来源渠道：链接带 ?ref=xxx 时记录是谁介绍来的，便于后台按渠道筛 */
@@ -173,7 +151,7 @@
     if (file.size > 20 * 1024 * 1024) { toast('图片过大，请换一张'); return; }
     toast('正在处理图片…');
     try {
-      const blob = await compressImage(file, 1600, 0.82, '拍摄于 ' + timeStamp());
+      const blob = await compressImage(file, 1600, 0.85);
       if (state.files[name] && state.files[name].url) URL.revokeObjectURL(state.files[name].url);
       state.files[name] = { blob: blob, url: URL.createObjectURL(blob), size: blob.size };
       refreshPhoto(name);
