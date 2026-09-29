@@ -155,9 +155,9 @@
         }
         const v = d[f.name];
         if (v == null || v === '' || (Array.isArray(v) && !v.length)) return '';
-        // 照片字段只记录 true/false，详情里已单独展示图片，这里给个可读说法
+        // 照片字段只记一个占位值，详情里已单独展示图片，这里统一说「已上传」
         if (f.type === 'photo') {
-          return `<div>${esc(f.label)}</div><div>${v === true ? '已上传' : esc(fmt(v))}</div>`;
+          return `<div>${esc(f.label)}</div><div>已上传</div>`;
         }
         return `<div>${esc(f.label)}</div><div>${esc(fmt(v))}</div>`;
       }).filter(Boolean);
