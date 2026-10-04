@@ -175,7 +175,7 @@
       if (kind === 'bankcard') {
         var hint = '未识别成功，请在光线明亮处对准角度重拍';
         var ec = errOf(name); if (ec) ec.textContent = hint;
-        ocrLine(name, hint, 'warn');
+        ocrLine(name, '');
         toast(hint);
         return;
       }
@@ -228,7 +228,7 @@
       if (!r.num) {
         var h2 = '未识别成功，请在光线明亮处对准角度重拍';
         var e2 = errOf(name); if (e2) e2.textContent = h2;
-        ocrLine(name, h2, 'warn');
+        ocrLine(name, '');
         return;
       }
       setVal('card_no', r.num || '');
