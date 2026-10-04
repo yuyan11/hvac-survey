@@ -141,12 +141,17 @@ async function baiduCall(api, params, c) {
   });
   const j = await r.json();
   if (j.error_code) {
-    const msg = j.error_msg || ('error_code ' + j.error_code);
-    // 17/18/19 = 免费额度/日调用量类超限；其余按普通错误处理
-    if ([17, 18, 19].includes(j.error_code) || /额度|免费|次数|已用完|超出/i.test(msg)) {
-      throw fail('quota', '百度：' + msg);
+    const raw = String(j.error_msg || ('error_code ' + j.error_code));
+    // 17/18/19 = 免费额度/日调用量类超限
+    if ([17, 18, 19].includes(j.error_code) || /额度|免费|次数|已用完|超出/i.test(raw)) {
+      throw fail('quota', '识别额度已用完：' + raw);
     }
-    throw fail('api', '百度：' + msg);
+    // 把百度的英文报错翻成人话
+    let msg = raw;
+    if (/recognize error/i.test(raw)) msg = '没识别出证件内容，请重拍（正面、完整、光线均匀，别用滤镜）';
+    else if (/image size|invalid image/i.test(raw)) msg = '图片不符合要求（最短边≥15px、最长边≤8192px、格式 jpg/png）';
+    else msg = '识别失败：' + raw;
+    throw fail('api', msg);
   }
   return j;
 }
