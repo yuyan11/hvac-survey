@@ -109,8 +109,10 @@
         var idFront = p.id_front || {}, idBack = p.id_back || {}, card = p.card_ocr || {};
         var figs = '';
         [['front', '身份证 · 人像面'], ['back', '身份证 · 国徽面'], ['selfie', '银行卡']].forEach(function (x) {
+          // 银行卡是选填的：没有这张就加载失败，直接隐藏这个图位
           figs += '<figure><img src="/api/employee/photo?token=' + encodeURIComponent(token) +
-            '&id=' + it.id + '&side=' + x[0] + '" alt="' + x[1] + '"><figcaption>' + x[1] + '</figcaption></figure>';
+            '&id=' + it.id + '&side=' + x[0] + '" alt="' + x[1] +
+            '" onerror="this.closest(\'figure\').style.display=\'none\'"><figcaption>' + x[1] + '</figcaption></figure>';
         });
 
         var kv = [];
@@ -120,6 +122,7 @@
         add('身份证号', it.idcard);
         add('银行卡号', it.card_no);
         add('开户行', it.card_bank);
+        if (!it.card_no && !it.card_bank) add('银行卡', '未提供（选填项）');
         add('登记时间', localTime(it.created_at));
         if (idFront.num) add('OCR 读到的号码', idFront.num + (idFront.num === String(it.idcard || '').toUpperCase() ? '（一致）' : '（与填写不一致）'));
         if (idFront.name) add('OCR 读到的姓名', idFront.name);

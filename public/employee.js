@@ -273,9 +273,10 @@
     if (!/^1[3-9]\d{9}$/.test(phone)) fail('phone', '请填写正确的 11 位手机号');
     if (!state.files.front) fail('front', '请上传身份证人像面');
     if (!state.files.back) fail('back', '请上传身份证国徽面');
-    if (!state.files.card) fail('card', '请上传银行卡照片');
+    // 银行卡是选填的：传了就尽量识别，识别不出也不拦提交（管理员可看照片手工录）
     if (state.files.front && !idcard) fail('front', '人像面没识别出身份证号，请重拍或手动联系管理员');
-    if (state.files.card && !cardNo) fail('card', '银行卡没识别出卡号，请重拍');
+    // 银行卡选填：传了但没识别出卡号时只提示，不拦提交
+    var cardWarn = (state.files.card && !cardNo) ? '银行卡照片没识别出卡号，已在后台留档，可在后台手工补录' : '';
 
     var bad1 = document.querySelector('.field.bad');
     if (bad1) { bad1.scrollIntoView({ block: 'center' }); return; }
@@ -320,6 +321,7 @@
         '<p>登记编号：<b>' + esc(j.id) + '</b></p>' +
         (upFail ? '<p class="warn">有 ' + upFail + ' 张照片没传上去，请记下编号补传</p>'
                 : '<p class="dim">证件照片已上传 ' + up + ' 张</p>') +
+        (cardWarn ? '<p class="warn">' + esc(cardWarn) + '</p>' : '') +
         '<p class="dim">请截图保存该编号</p>' +
         '<div class="donebtns"><button class="ghost" onclick="location.reload()">再登记一位</button></div></div>';
       window.scrollTo({ top: 0, behavior: 'smooth' });
