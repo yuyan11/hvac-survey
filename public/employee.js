@@ -145,6 +145,16 @@
         state.files[name] = { blob: r.blob, url: URL.createObjectURL(r.blob), size: r.blob.size };
         refresh(name);
         bad(name, false); errOf(name).textContent = '';
+
+        // 只有「有号码要读」的字段才调 OCR，省额度：
+        //   身份证人像面 → 读身份证号；银行卡 → 读卡号/开户行
+        //   身份证国徽面没有号码可读 → 不调 OCR，只本地保存
+        if (kind === 'idcard' && side === 'back') {
+          ocrLine(name, '国徽面已保存（不需要识别）');
+          toast('');
+          return;
+        }
+
         ocrLine(name, '正在识别…');
         return toBase64(r.blob).then(function (b64) {
           return fetch('/api/ocr', {

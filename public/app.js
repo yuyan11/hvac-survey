@@ -234,46 +234,10 @@
       state.files[name] = { blob: blob, url: URL.createObjectURL(blob), size: blob.size };
       refreshPhoto(name);
       toast('');
-
-      // 是身份证的话，当场送 OCR 判一次：不是证件就直接退回，不让它走到提交
-      if (kind === 'idcard') {
-        toast('正在识别证件…');
-        const j = await ocrCheck(blob, 'idcard', f.side || 'front');
-        if (j && j.code === 'notid') {
-          URL.revokeObjectURL(state.files[name].url);
-          delete state.files[name];
-          if (state.ocr) delete state.ocr[name];
-          refreshPhoto(name);
-          if (fieldEl) fieldEl.classList.add('bad');
-          if (errEl) errEl.textContent = j.error || '这张不像身份证，请重拍';
-          toast(j.error || '这张不像身份证，请重拍');
-          return;
-        }
-        if (j && j.ok && state.ocr) state.ocr[name] = j.result;
-        toast(j && j.ok ? '证件已识别' : '（未能自动识别，稍后人工核对）');
-      }
+      // 注意：这里只做本地体检（尺寸/方向/明暗/对比度），不调 OCR。
+      // 是否真是身份证交给提交后的 /api/verify 去核（OCR 只用于读号码，不用于判「像不像证件」）。
     } catch (e) {
       toast('图片处理失败：' + e.message);
-    }
-  }
-
-  /* 调后端 OCR（失败不抛错，返回 null 表示稍后人工核对） */
-  async function ocrCheck(blob, kind, side) {
-    try {
-      const b64 = await new Promise((res, rej) => {
-        const fr = new FileReader();
-        fr.onerror = () => rej(new Error('读取失败'));
-        fr.onload = () => res(String(fr.result).split(',')[1]);
-        fr.readAsDataURL(blob);
-      });
-      const r = await fetch('/api/ocr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: kind, side: side, image: b64 }),
-      });
-      return await r.json();
-    } catch (e) {
-      return null;
     }
   }
 
