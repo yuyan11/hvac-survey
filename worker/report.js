@@ -441,7 +441,8 @@ async function digestTick(env, now) {
   if (!cfg.recipients.length) return '未配置收件邮箱';
 
   const { h, date } = bjHourMin(now);
-  if (h !== cfg.hour) return `未到发送时间（现在 ${h} 点，设定 ${cfg.hour} 点）`;
+  // 到点之后每个整点都会来试，直到当天真的发出去为止（发失败/没发成就自动顺延重试）
+  if (h < cfg.hour) return `未到发送时间（现在 ${h} 点，设定 ${cfg.hour} 点起）`;
 
   // 今天是否已经发过（按时间戳落在今天北京时间之内判断）
   try {

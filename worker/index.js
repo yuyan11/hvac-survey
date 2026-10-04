@@ -637,14 +637,20 @@ async function mailTest(request, env, url) {
   try { b = await request.json(); } catch (e) { b = {}; }
 
   const cfg = await getMailConfig(env);
-  const oneOff = String(b.to || '').trim();
-  const recipients = oneOff ? oneOff.split(/[,，;；\s]+/).filter(Boolean) : cfg.recipients;
+  // 注意：b.to / b.toEmail 是「临时收件邮箱」，日期区间要用 dfrom/dto，别混用；
+  // 传进来的值如果不像邮箱（比如误把日期当收件人）就忽略，回落到已保存的收件邮箱
+  const oneOff = String(b.toEmail || b.to || '').trim();
+  const recipients = (oneOff && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(oneOff))
+    ? oneOff.split(/[,，;；\s]+/).filter(Boolean)
+    : cfg.recipients;
   if (!recipients.length) return json({ ok: false, error: '请先填写收件邮箱并保存' }, 400);
   if (!env.EMAIL) return json({ ok: false, error: '邮件发送绑定还没生效：wrangler.toml 里的 [[send_email]] 需要部署后才会出现' }, 503);
 
-  const useRange = isYmd(b.from) && isYmd(b.to);
-  const fromIso = useRange ? dayStartUtc(b.from) : new Date(Date.now() - 7 * 86400000).toISOString();
-  const toIso = useRange ? dayEndUtc(b.to) : new Date().toISOString();
+  const rf = String(b.dfrom || '').trim();
+  const rt = String(b.dto || '').trim();
+  const useRange = isYmd(rf) && isYmd(rt);
+  const fromIso = useRange ? dayStartUtc(rf) : new Date(Date.now() - 7 * 86400000).toISOString();
+  const toIso = useRange ? dayEndUtc(rt) : new Date().toISOString();
 
   // 临时开关：pad=<MB> 时把一段不可压缩的随机字节塞进 xlsx，用来实测邮件体积上限
   const padMb = Number(b.pad || 0);
@@ -659,7 +665,7 @@ async function mailTest(request, env, url) {
       padBytes,
     });
     await logMail(env, {
-      to: recipients.join(','), subject: useRange ? `手动发送 ${b.from}~${b.to}` : '手动发送（最近 7 天）',
+      to: recipients.join(','), subject: useRange ? `手动发送 ${rf}~${rt}` : '手动发送（最近 7 天）',
       survey: null, employee: null, ok: res.ok ? 1 : 0, error: res.ok ? '' : res.message,
     });
     if (!res.ok) return json({ ok: false, error: res.message }, 400);
