@@ -27,6 +27,73 @@
     return s.length >= 8 ? s.slice(0, 4) + ' **** **** ' + s.slice(-4) : s;
   }
 
+  /* ---------- 日期（统一按北京时间，和服务器口径一致） ---------- */
+  function bjToday(offsetDays) {
+    var t = new Date(Date.now() + 8 * 3600 * 1000 + (offsetDays || 0) * 86400000);
+    return t.toISOString().slice(0, 10);
+  }
+
+  function panel() {
+    var today = bjToday(0);
+    return '<div class="panel"><h3>按日期导出</h3>' +
+      '<div class="panelrow">' +
+      '<label>开始 <input type="date" id="from" value="' + today + '"></label>' +
+      '<label>结束 <input type="date" id="to" value="' + today + '"></label>' +
+      '<button class="chip" data-q="today">今天</button>' +
+      '<button class="chip" data-q="yest">昨天</button>' +
+      '<button class="chip" data-q="week">近 7 天</button>' +
+      '<button class="chip" data-q="month">本月</button>' +
+      '<button class="chip" data-q="all">全部</button>' +
+      '<button class="btn" id="xls">导出 Excel</button>' +
+      '</div>' +
+      '<div class="hint" id="xlsmsg">导出的是真正的 .xlsx 表格（Excel / WPS / 手机都能直接打开），按登记时间筛选。</div>' +
+      '</div>';
+  }
+
+  function bindPanel() {
+    var from = $('#from'), to = $('#to'), msg = $('#xlsmsg');
+    var setQ = function (q) {
+      var t = bjToday(0);
+      if (q === 'today') { from.value = t; to.value = t; }
+      else if (q === 'yest') { from.value = to.value = bjToday(-1); }
+      else if (q === 'week') { from.value = bjToday(-6); to.value = t; }
+      else if (q === 'month') { from.value = t.slice(0, 8) + '01'; to.value = t; }
+      else { from.value = '2020-01-01'; to.value = t; }
+    };
+    document.querySelectorAll('.chip[data-q]').forEach(function (b) {
+      b.onclick = function () { setQ(b.getAttribute('data-q')); };
+    });
+    $('#xls').onclick = function () {
+      if (!from.value || !to.value) { msg.textContent = '请选择开始和结束日期'; return; }
+      msg.textContent = '正在生成 Excel…';
+      exportXls(from.value, to.value, msg);
+    };
+  }
+
+  function saveBlob(blob, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 3000);
+  }
+
+  function exportXls(f, t, msg) {
+    fetch('/api/export?token=' + encodeURIComponent(token) + '&type=employee&from=' + f + '&to=' + t)
+      .then(function (r) {
+        var ct = r.headers.get('Content-Type') || '';
+        if (ct.indexOf('json') >= 0) {
+          return r.json().then(function (j) { throw new Error(j.error || '导出失败'); });
+        }
+        return r.blob().then(function (b) { return { blob: b, name: '员工信息登记_' + f + '_' + t + '.xlsx' }; });
+      })
+      .then(function (o) {
+        saveBlob(o.blob, o.name);
+        msg.textContent = '已导出：' + o.name;
+      })
+      .catch(function (e) { msg.textContent = '导出失败：' + e.message; });
+  }
+
   function login() {
     $('#host').innerHTML =
       '<div class="login"><h2>管理员登录</h2>' +
@@ -70,7 +137,8 @@
       '<h2>员工登记列表</h2>' +
       '<p class="sub">共 ' + list.length + ' 条 · 仅本表数据，与入职考察表相互独立</p>' +
       '<div class="toolbar"><button class="btn gray" id="refresh">刷新</button>' +
-      '<button class="btn gray" id="csv">导出 CSV</button><button class="btn gray" id="logout">退出</button></div>' +
+      '<button class="btn gray" id="csv">导出 CSV（当前列表）</button><button class="btn gray" id="logout">退出</button></div>' +
+      panel() +
       '<div class="tblwrap"><table><thead><tr>' +
       '<th>编号</th><th>姓名</th><th>手机号</th><th>身份证号</th><th>银行卡号</th><th>开户行</th><th>登记时间</th><th>操作</th>' +
       '</tr></thead><tbody>' + (rows || '<tr><td colspan="8" class="empty">暂无数据</td></tr>') + '</tbody></table></div>';
@@ -78,6 +146,7 @@
     $('#refresh').onclick = load;
     $('#logout').onclick = function () { token = ''; login(); };
     $('#csv').onclick = exportCsv;
+    bindPanel();
     document.querySelectorAll('[data-id]').forEach(function (b) {
       b.onclick = function () { detail(b.getAttribute('data-id')); };
     });

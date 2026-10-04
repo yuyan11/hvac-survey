@@ -44,3 +44,25 @@ CREATE TABLE IF NOT EXISTS employees (
 );
 
 CREATE INDEX IF NOT EXISTS idx_employees_created ON employees (created_at DESC);
+
+-- 系统设置：目前放「每日邮件推送」的配置（收件邮箱 / 开关 / 发送时间 / 上次发送时间）
+-- 后台页面读写这张表，Worker 定时任务也读它
+CREATE TABLE IF NOT EXISTS app_settings (
+  k          TEXT PRIMARY KEY,
+  v          TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+
+-- 发信记录：只留最近 200 条，用来在后台显示「最近发送情况」以及防止同一天重复发
+CREATE TABLE IF NOT EXISTS mail_log (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  sent_at        TEXT NOT NULL,
+  recipients     TEXT NOT NULL DEFAULT '',
+  subject        TEXT NOT NULL DEFAULT '',
+  survey_count   INTEGER NOT NULL DEFAULT 0,
+  employee_count INTEGER NOT NULL DEFAULT 0,
+  ok             INTEGER NOT NULL DEFAULT 1,
+  error          TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_mail_log_sent ON mail_log (sent_at DESC);

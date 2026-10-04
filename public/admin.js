@@ -94,6 +94,8 @@
         <button class="btn gray" id="rf">刷新</button>
         <button class="btn gray" id="lo">退出</button>
       </div>
+      ${datePanel()}
+      ${mailPanelHtml()}
       <div class="tblwrap">
         <table>
           <thead><tr><th>编号</th><th>姓名/队伍</th><th>电话</th><th>来源</th><th>身份证核验</th><th>提交时间</th><th>操作</th></tr></thead>
@@ -116,6 +118,160 @@
     document.querySelector('#exp').onclick = exportCsv;
     document.querySelector('#expj').onclick = exportJson;
     box().querySelectorAll('.linkbtn[data-id]').forEach(b => b.onclick = () => showDetail(b.dataset.id));
+    bindDatePanel();
+    loadMailPanel();
+  }
+
+  /* ---------- 按日期区间导出 xlsx（北京时间口径，与服务器一致） ---------- */
+  function bjToday(offsetDays) {
+    const t = new Date(Date.now() + 8 * 3600 * 1000 + (offsetDays || 0) * 86400000);
+    return t.toISOString().slice(0, 10);
+  }
+
+  function datePanel() {
+    const today = bjToday(0);
+    return `<div class="panel"><h3>按日期导出</h3>
+      <div class="panelrow">
+        <label>开始 <input type="date" id="exfrom" value="${today}"></label>
+        <label>结束 <input type="date" id="exto" value="${today}"></label>
+        <button class="chip" data-q="today">今天</button>
+        <button class="chip" data-q="yest">昨天</button>
+        <button class="chip" data-q="week">近 7 天</button>
+        <button class="chip" data-q="month">本月</button>
+        <button class="chip" data-q="all">全部</button>
+        <button class="chip" data-q="week1">上周</button>
+      </div>
+      <div class="panelrow" style="margin-top:10px">
+        <select id="extype" style="width:auto;min-width:190px">
+          <option value="all">问卷 + 员工登记（两张表）</option>
+          <option value="survey">只要问卷答卷</option>
+          <option value="employee">只要员工登记</option>
+        </select>
+        <button class="btn" id="exxls">导出 Excel</button>
+      </div>
+      <div class="hint" id="exmsg">真正的 .xlsx 文件（Excel / WPS / 手机都能直接打开），按提交时间筛选。</div>
+    </div>`;
+  }
+
+  function bindDatePanel() {
+    const from = document.querySelector('#exfrom');
+    const to = document.querySelector('#exto');
+    const msg = document.querySelector('#exmsg');
+    if (!from) return;
+    const setQ = q => {
+      const t = bjToday(0);
+      if (q === 'today') { from.value = t; to.value = t; }
+      else if (q === 'yest') { from.value = to.value = bjToday(-1); }
+      else if (q === 'week') { from.value = bjToday(-6); to.value = t; }
+      else if (q === 'week1') { from.value = bjToday(-13); to.value = bjToday(-7); }
+      else if (q === 'month') { from.value = t.slice(0, 8) + '01'; to.value = t; }
+      else { from.value = '2020-01-01'; to.value = t; }
+    };
+    box().querySelectorAll('.chip[data-q]').forEach(b => b.onclick = () => setQ(b.dataset.q));
+    document.querySelector('#exxls').onclick = () => {
+      if (!from.value || !to.value) { msg.textContent = '请选择开始和结束日期'; return; }
+      const type = document.querySelector('#extype').value;
+      msg.textContent = '正在生成 Excel…';
+      fetch(`/api/export?token=${encodeURIComponent(token)}&type=${type}&from=${from.value}&to=${to.value}`)
+        .then(r => {
+          const ct = r.headers.get('Content-Type') || '';
+          if (ct.includes('json')) return r.json().then(j => { throw new Error(j.error || '导出失败'); });
+          return r.blob().then(b => ({ blob: b, name: `招聘登记数据_${from.value}_${to.value}.xlsx` }));
+        })
+        .then(o => { downloadBlob(o.blob, o.name); msg.textContent = '已导出：' + o.name; })
+        .catch(e => { msg.textContent = '导出失败：' + e.message; });
+    };
+  }
+
+  function downloadBlob(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  }
+
+  /* ---------- 每日邮件推送设置 ---------- */
+  function mailPanelHtml() {
+    return `<div class="panel"><h3>每日邮件推送</h3>
+      <div id="mailbody"><p class="dim">加载中…</p></div>
+    </div>`;
+  }
+
+  async function loadMailPanel() {
+    const host = document.querySelector('#mailbody');
+    if (!host) return;
+    let j;
+    try {
+      const r = await fetch(`/api/mail-settings?token=${encodeURIComponent(token)}`);
+      j = await r.json();
+    } catch (e) {
+      host.innerHTML = `<p class="dim">读取设置失败：${esc(e.message)}</p>`;
+      return;
+    }
+    if (!j.ok) { host.innerHTML = `<p class="dim">${esc(j.error || '读取设置失败')}</p>`; return; }
+    const c = j.config || {};
+    const hours = Array.from({ length: 24 }, (_, i) => i)
+      .map(i => `<option value="${i}"${i === c.hour ? ' selected' : ''}>${String(i).padStart(2, '0')}:00</option>`).join('');
+    const log = (j.log || []);
+    host.innerHTML = `
+      <div class="panelrow">
+        <label style="flex:1;min-width:260px">收件邮箱 <input type="text" id="mt" value="${esc((c.recipients || []).join(','))}" placeholder="多个邮箱用逗号隔开，如 a@qq.com,b@163.com"></label>
+      </div>
+      <div class="panelrow" style="margin-top:10px">
+        <label>发送时间 <select id="mh" style="width:auto">${hours}</select>（北京时间，每天一次）</label>
+        <label style="margin-left:6px"><input type="checkbox" id="me" ${c.enabled ? 'checked' : ''} style="width:auto"> 启用每日自动发送</label>
+      </div>
+      <div class="panelrow" style="margin-top:10px">
+        <label style="flex:1;min-width:240px">发件地址 <input type="text" id="mf" value="${esc(c.from || '')}" placeholder="noreply@199118.xyz"></label>
+      </div>
+      <div class="panelrow" style="margin-top:12px">
+        <button class="btn" id="msave">保存设置</button>
+        <button class="btn gray" id="mtest">立即发一封测试邮件</button>
+        <span class="dim" id="mmsg"></span>
+      </div>
+      <div class="hint">
+        ${j.mailerReady ? '' : '<b style="color:var(--danger)">邮件发送绑定还没生效</b>，部署新版本后才会出现；'}
+        逻辑：每天到点检查一次，把「上次发信之后」的新增记录打包成 xlsx 发过去；当天没有新增就不发。
+        收件邮箱必须是 Cloudflare 账号里已验证的目的地址（当前已验证：948683750@qq.com）。
+      </div>
+      ${log.length ? `<h3 style="margin-top:16px">最近发送</h3><div class="kv">${log.map(x => `
+        <div>${esc(localTime(x.sent_at))}</div>
+        <div>${x.ok ? '<span class="badge ok">成功</span>' : '<span class="badge bad">失败</span>'} ${esc(x.subject || '')} ${esc(x.recipients || '')} ${x.ok ? '' : esc(x.error || '')}</div>
+      `).join('')}</div>` : ''}
+    `;
+
+    const msg = document.querySelector('#mmsg');
+    document.querySelector('#msave').onclick = async () => {
+      msg.textContent = '保存中…';
+      try {
+        const r = await fetch(`/api/mail-settings?token=${encodeURIComponent(token)}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: document.querySelector('#mt').value.trim(),
+            hour: document.querySelector('#mh').value,
+            enabled: document.querySelector('#me').checked,
+            from: document.querySelector('#mf').value.trim(),
+          }),
+        });
+        const rj = await r.json();
+        if (!rj.ok) { msg.textContent = rj.error || '保存失败'; return; }
+        msg.textContent = '已保存 ✓';
+        loadMailPanel();
+      } catch (e) { msg.textContent = '保存失败：' + e.message; }
+    };
+    document.querySelector('#mtest').onclick = async () => {
+      msg.textContent = '正在发送…';
+      try {
+        const r = await fetch(`/api/mail-test?token=${encodeURIComponent(token)}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: document.querySelector('#mt').value.trim() }),
+        });
+        const rj = await r.json();
+        msg.textContent = rj.ok ? (rj.message || '已发送 ✓') : (rj.error || '发送失败');
+        loadMailPanel();
+      } catch (e) { msg.textContent = '发送失败：' + e.message; }
+    };
   }
 
   function localTime(s) {

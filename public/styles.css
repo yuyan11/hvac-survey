@@ -301,6 +301,23 @@ textarea { resize: vertical; }
 .adminbox { padding: 24px 0 60px; }
 .adminbox h2 { margin: 0 0 4px; font-size: 20px; }
 .adminbox .sub { color: var(--dim); font-size: 13.5px; margin: 0 0 20px; }
+
+/* ---------- 后台：日期区间导出 / 每日邮件推送 ---------- */
+.panel {
+  background: #fff; border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; margin: 0 0 16px;
+}
+.panel h3 { margin: 0 0 10px; font-size: 15px; }
+.panel h3:not(:first-child) { margin-top: 18px; }
+.panelrow { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.panelrow label { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--dim); }
+.panelrow input[type=text], .panelrow input[type=date] { width: auto; padding: 8px 10px; font-size: 14px; }
+.chip {
+  border: 1px solid var(--line); background: #fff; color: var(--text);
+  border-radius: 999px; padding: 6px 13px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.chip:hover { border-color: var(--brand); color: var(--brand); }
+.badge.ok, .badge.warn, .badge.bad { white-space: nowrap; }
 .login {
   background: #fff; border: 1px solid var(--line);
   border-radius: var(--radius); padding: 20px;

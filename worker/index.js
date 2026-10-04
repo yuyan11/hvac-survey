@@ -12,6 +12,12 @@ const CORS = {
 };
 
 import { ocrWithProvider, normalizeId, PROVIDER_LABEL } from './ocr.js';
+import { XLSX_MIME } from './xlsx.js';
+import {
+  buildWorkbook, rangeParams, isYmd, bjToday, dayStartUtc,
+  getMailConfig, setSetting, sendDigest, runScheduledDigest, logMail,
+  fetchSurvey, fetchEmployees, bjDate,
+} from './report.js';
 
 /* 当月字符串，形如 2026-09 —— 免费额度按自然月重置，用它标记某个账号本月是否已耗尽 */
 function monthKey() {
@@ -523,6 +529,122 @@ async function ocrKeys(request, env, url) {
   return json({ ok: false, error: '不支持的方法' }, 405);
 }
 
+/* ---------------- GET /api/export：按日期区间导出 xlsx ----------------
+ * type=survey|employee|all（默认 all，两块各一张工作表）
+ * from / to：北京时间日期 YYYY-MM-DD，缺省=今天
+ */
+async function exportXlsx(request, env, url) {
+  if (!env.DB) return json({ ok: false, error: '数据库未绑定' }, 500);
+  if (!adminOk(url, env)) return json({ ok: false, error: '口令错误' }, 401);
+
+  const type = String(url.searchParams.get('type') || 'all');
+  const form = String(url.searchParams.get('form') || '');
+  const { from, to, fromIso, toIso } = rangeParams(url);
+
+  try {
+    const [survey, employee] = await Promise.all([
+      type === 'employee' ? [] : fetchSurvey(env, fromIso, toIso, form),
+      type === 'survey' ? [] : fetchEmployees(env, fromIso, toIso),
+    ]);
+    const bytes = await buildWorkbook({ survey, employee });
+    if (!bytes) return json({ ok: false, error: `${from} ~ ${to} 这个区间没有数据` }, 404);
+
+    const label = type === 'employee' ? '员工信息登记' : (type === 'survey' ? '入职考察登记' : '招聘登记数据');
+    const cn = encodeURIComponent(`${label}_${from}_${to}.xlsx`);
+    return new Response(bytes, {
+      headers: {
+        'Content-Type': XLSX_MIME,
+        'Content-Disposition': `attachment; filename="report_${from}_${to}.xlsx"; filename*=UTF-8''${cn}`,
+        'Content-Length': String(bytes.length),
+        'Cache-Control': 'no-store',
+        ...CORS,
+      },
+    });
+  } catch (e) {
+    return json({ ok: false, error: '导出失败：' + ((e && e.message) || e) }, 500);
+  }
+}
+
+/* ---------------- /api/mail-settings：每日邮件推送设置（需管理员口令） ---------------- */
+async function mailSettings(request, env, url) {
+  if (!env.DB) return json({ ok: false, error: '数据库未绑定' }, 500);
+  if (!adminOk(url, env)) return json({ ok: false, error: '口令错误' }, 401);
+
+  if (request.method === 'GET') {
+    const config = await getMailConfig(env);
+    let log = [];
+    try {
+      const r = await env.DB.prepare('SELECT sent_at, recipients, subject, ok, error FROM mail_log ORDER BY id DESC LIMIT 10').all();
+      log = (r && r.results) || [];
+    } catch (e) { /* 表未建 */ }
+    return json({ ok: true, config, log, mailerReady: !!env.EMAIL, sender: (env.MAIL_FROM || '') });
+  }
+
+  if (request.method === 'POST') {
+    let b;
+    try { b = await request.json(); } catch (e) { return json({ ok: false, error: '请求格式错误' }, 400); }
+    if (b.to !== undefined) {
+      const to = String(b.to || '').trim();
+      if (to && !/^[^\s@,;，；]+@[^\s@,;，；]+\.[^\s@,;，；]+/.test(to)) {
+        return json({ ok: false, error: '收件邮箱格式不对' }, 400);
+      }
+      await setSetting(env, 'mail_to', to.slice(0, 500));
+    }
+    if (b.enabled !== undefined) await setSetting(env, 'mail_enabled', b.enabled ? '1' : '0');
+    if (b.hour !== undefined) {
+      const h = parseInt(b.hour, 10);
+      if (!(h >= 0 && h <= 23)) return json({ ok: false, error: '发送时间只能是 0-23 点' }, 400);
+      await setSetting(env, 'mail_hour', String(h));
+    }
+    if (b.from !== undefined) {
+      const f = String(b.from || '').trim();
+      if (f && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f) || !/@199118\.xyz$/i.test(f))) {
+        return json({ ok: false, error: '发件地址必须用本域名：xxx@199118.xyz' }, 400);
+      }
+      await setSetting(env, 'mail_from', f);
+    }
+    return json({ ok: true, config: await getMailConfig(env) });
+  }
+  return json({ ok: false, error: '不支持的方法' }, 405);
+}
+
+/* ---------------- POST /api/mail-test：立刻发一封（默认带最近 7 天数据） ---------------- */
+async function mailTest(request, env, url) {
+  if (!env.DB) return json({ ok: false, error: '数据库未绑定' }, 500);
+  if (!adminOk(url, env)) return json({ ok: false, error: '口令错误' }, 401);
+
+  let b = {};
+  try { b = await request.json(); } catch (e) { b = {}; }
+
+  const cfg = await getMailConfig(env);
+  const oneOff = String(b.to || '').trim();
+  const recipients = oneOff ? oneOff.split(/[,，;；\s]+/).filter(Boolean) : cfg.recipients;
+  if (!recipients.length) return json({ ok: false, error: '请先填写收件邮箱并保存' }, 400);
+  if (!env.EMAIL) return json({ ok: false, error: '邮件发送绑定还没生效：wrangler.toml 里的 [[send_email]] 需要部署后才会出现' }, 503);
+
+  const useRange = isYmd(b.from) && isYmd(b.to);
+  const fromIso = useRange ? dayStartUtc(b.from) : new Date(Date.now() - 7 * 86400000).toISOString();
+  const toIso = useRange ? dayEndUtc(b.to) : new Date().toISOString();
+
+  try {
+    const res = await sendDigest(env, {
+      fromIso, toIso,
+      fromLabel: bjDate(fromIso), toLabel: bjDate(toIso),
+      recipients, test: true,
+    });
+    await logMail(env, {
+      to: recipients.join(','), subject: useRange ? `手动发送 ${b.from}~${b.to}` : '手动发送（最近 7 天）',
+      survey: null, employee: null, ok: res.ok ? 1 : 0, error: res.ok ? '' : res.message,
+    });
+    if (!res.ok) return json({ ok: false, error: res.message }, 400);
+    return json({ ok: true, message: res.message + (res.count ? `（含 ${res.count} 条记录）` : '（区间内暂无数据，仅发送了模板）') });
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    await logMail(env, { to: recipients.join(','), subject: '手动发送', survey: 0, employee: 0, ok: 0, error: msg });
+    return json({ ok: false, error: '发送失败：' + msg }, 502);
+  }
+}
+
 /* ---------------- 路由 ---------------- */
 export default {
   async fetch(request, env) {
@@ -564,6 +686,17 @@ export default {
     if (path === '/api/ocr-keys') {
       return ocrKeys(request, env, url);
     }
+    if (path === '/api/export') {
+      if (method !== 'GET') return json({ ok: false, error: '仅支持 GET' }, 405);
+      return exportXlsx(request, env, url);
+    }
+    if (path === '/api/mail-settings') {
+      return mailSettings(request, env, url);
+    }
+    if (path === '/api/mail-test') {
+      if (method !== 'POST') return json({ ok: false, error: '仅支持 POST' }, 405);
+      return mailTest(request, env, url);
+    }
     if (path === '/api/employee/submit') {
       if (method !== 'POST') return json({ ok: false, error: '仅支持 POST' }, 405);
       return employeeSubmit(request, env);
@@ -587,5 +720,14 @@ export default {
     // 其余请求交给静态资源（public/）
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response('静态资源未绑定（ASSETS）', { status: 500 });
+  },
+
+  /* ---------------- 定时任务（每小时整点跑一次，命中配置的北京整点才真正发信） ---------------- */
+  async scheduled(event, env, ctx) {
+    const job = runScheduledDigest(env)
+      .then(r => { console.log('[每日汇总]', r); return r; })
+      .catch(e => { console.log('[每日汇总] 失败：', (e && e.message) || e); });
+    if (ctx && ctx.waitUntil) ctx.waitUntil(job);
+    else await job;
   },
 };

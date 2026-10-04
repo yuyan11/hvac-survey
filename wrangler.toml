@@ -29,3 +29,16 @@ bucket_name = "survey-idcards"
 # 管理员口令（后台查看 / 导出答卷用）
 [vars]
 ADMIN_TOKEN = "hvac-survey-2026-7kd2"
+# 发件地址：必须是本域名（199118.xyz 已在 Cloudflare 开通 Email Routing）
+MAIL_FROM = "noreply@199118.xyz"
+
+# 邮件发送绑定（Cloudflare Email Service）
+# 不带 destination_address / allowed_destination_addresses = 可以发给账号里**任意已通过验证**的
+# 目的地址；发给已验证地址不占额度、永久免费，收件人在后台页面里自己填。
+[[send_email]]
+name = "EMAIL"
+
+# 定时任务：每小时整点触发一次，代码里判断是否到了后台配置的「发送时间」，到点且当天没发过才发。
+# 这样发送时间可以在后台随时改，不用改配置重新部署。
+[triggers]
+crons = ["0 * * * *"]
