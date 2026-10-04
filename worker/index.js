@@ -453,6 +453,36 @@ async function employeeUpload(request, env) {
   }
 }
 
+/* ---------------- /api/photo-admin：管理员替换证件照（覆盖同一 key） ---------------- */
+async function photoAdmin(request, env) {
+  if (request.method !== 'POST') return json({ ok: false, error: '仅支持 POST' }, 405);
+  if (!env.IDCARDS) return json({ ok: false, error: '未绑定 R2 存储桶' }, 500);
+
+  let form;
+  try { form = await request.formData(); }
+  catch (e) { return json({ ok: false, error: '上传格式错误' }, 400); }
+
+  const token = String(form.get('token') || '');
+  if (!env.ADMIN_TOKEN || token !== env.ADMIN_TOKEN) return json({ ok: false, error: '口令错误' }, 401);
+
+  const id = String(form.get('id') || '');
+  const side = String(form.get('side') || '');
+  const file = form.get('file');
+  if (!/^\d{1,12}$/.test(id)) return json({ ok: false, error: '编号无效' }, 400);
+  if (!['front', 'back', 'selfie'].includes(side)) return json({ ok: false, error: '照片面别无效' }, 400);
+  if (!file || typeof file === 'string') return json({ ok: false, error: '未收到图片' }, 400);
+  if (!/^image\//.test(file.type || '')) return json({ ok: false, error: '仅支持图片文件' }, 400);
+  if (file.size > 8 * 1024 * 1024) return json({ ok: false, error: '图片超过 8MB' }, 400);
+
+  const key = `idcard/${id}_${side}.jpg`;
+  try {
+    await env.IDCARDS.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: 'image/jpeg' } });
+    return json({ ok: true, key: key });
+  } catch (e) {
+    return json({ ok: false, error: '写入存储失败：' + (e.message || e) }, 500);
+  }
+}
+
 /* ---------------- /api/ocr-keys：OCR 账号管理（需管理员口令） ---------------- */
 function adminOk(url, env) {
   return env.ADMIN_TOKEN && url.searchParams.get('token') === env.ADMIN_TOKEN;
@@ -518,6 +548,9 @@ export default {
     if (path === '/api/photo') {
       if (method !== 'GET') return json({ ok: false, error: '仅支持 GET' }, 405);
       return photo(request, env);
+    }
+    if (path === '/api/photo-admin') {
+      return photoAdmin(request, env);
     }
     if (path === '/api/verify') {
       if (method !== 'POST') return json({ ok: false, error: '仅支持 POST' }, 405);

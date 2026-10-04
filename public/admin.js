@@ -173,7 +173,12 @@
     if (imgs.length) {
       html += `<h3>照片</h3><div class="idcardimgs">`;
       imgs.forEach(([side, label]) => {
-        html += `<figure><img src="/api/photo?token=${encodeURIComponent(token)}&id=${it.id}&side=${side}" alt="${esc(label)}"><figcaption>${esc(label)}</figcaption></figure>`;
+        html += `<figure><img src="/api/photo?token=${encodeURIComponent(token)}&id=${it.id}&side=${side}" alt="${esc(label)}">
+          <figcaption>${esc(label)}
+            <label class="linkbtn" style="font-size:12.5px;margin-left:6px">换一张
+              <input type="file" accept="image/*" class="rephoto" data-side="${side}" style="display:none">
+            </label>
+          </figcaption></figure>`;
       });
       html += `</div>`;
       html += `<p style="margin-top:10px"><button class="btn gray" id="reverify">${o ? '重新核验身份证' : '核验身份证'}</button>
@@ -225,6 +230,29 @@
         }
       };
     }
+
+    // 「换一张」：管理员替换某张证件照（覆盖同一个对象），用于老照片有水印/拍错的情况
+    box().querySelectorAll('input.rephoto').forEach(inp => {
+      inp.onchange = async () => {
+        const f = inp.files && inp.files[0];
+        if (!f) return;
+        const msg = document.querySelector('#rvmsg');
+        if (msg) msg.textContent = '正在上传替换…';
+        try {
+          const fd = new FormData();
+          fd.append('token', token);
+          fd.append('id', it.id);
+          fd.append('side', inp.dataset.side);
+          fd.append('file', f, inp.dataset.side + '.jpg');
+          const rr = await fetch('/api/photo-admin', { method: 'POST', body: fd });
+          const rj = await rr.json();
+          if (!rj.ok) { if (msg) msg.textContent = rj.error || '替换失败'; return; }
+          showDetail(it.id);
+        } catch (e) {
+          if (msg) msg.textContent = '替换失败：' + e.message;
+        }
+      };
+    });
   }
 
   /* ---------- CSV 导出 ---------- */
