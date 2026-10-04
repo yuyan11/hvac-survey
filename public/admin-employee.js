@@ -126,6 +126,7 @@
         add('登记时间', localTime(it.created_at));
         if (idFront.num) add('OCR 读到的号码', idFront.num + (idFront.num === String(it.idcard || '').toUpperCase() ? '（一致）' : '（与填写不一致）'));
         if (idFront.name) add('OCR 读到的姓名', idFront.name);
+        if (idFront.address) add('住址（OCR 识别）', idFront.address);
         if (idFront.riskType) add('证件风险判定', idFront.riskType);
         if (idBack.authority) add('签发机关', idBack.authority);
         if (idBack.validFrom) add('有效期限', idBack.validFrom + (idBack.validTo ? ' 至 ' + idBack.validTo : ''));

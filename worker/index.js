@@ -245,6 +245,7 @@ async function verify(request, env) {
         providerLabel: PROVIDER_LABEL[k.provider] || k.provider,
         num: r.num || '',
         name: r.name || '',
+        address: r.address || '',
         typed: typed,
         matched: matched,
         imageStatus: r.imageStatus || '',

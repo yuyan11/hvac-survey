@@ -171,7 +171,15 @@
 
   function applyOcr(name, kind, j) {
     if (!j || !j.ok) {
-      // 「识别出来不是证件」是确定性的结论 → 直接退回，让用户重拍
+      // 银行卡是选填的：识别不出也只提示重拍，照片保留、照样能提交
+      if (kind === 'bankcard') {
+        var hint = '未识别成功，请在光线明亮处对准角度重拍';
+        var ec = errOf(name); if (ec) ec.textContent = hint;
+        ocrLine(name, hint, 'warn');
+        toast(hint);
+        return;
+      }
+      // 身份证人像面：判「不是身份证」是确定性的结论 → 直接退回，让用户重拍
       if (j && j.code === 'notid') {
         if (state.files[name] && state.files[name].url) URL.revokeObjectURL(state.files[name].url);
         delete state.files[name];
@@ -217,6 +225,12 @@
     }
 
     if (kind === 'bankcard') {
+      if (!r.num) {
+        var h2 = '未识别成功，请在光线明亮处对准角度重拍';
+        var e2 = errOf(name); if (e2) e2.textContent = h2;
+        ocrLine(name, h2, 'warn');
+        return;
+      }
       setVal('card_no', r.num || '');
       setVal('card_bank', r.bankName || '');
       if (r.holderName && !$('input[name="name"]').value) setVal('name', r.holderName);
@@ -275,8 +289,7 @@
     if (!state.files.back) fail('back', '请上传身份证国徽面');
     // 银行卡是选填的：传了就尽量识别，识别不出也不拦提交（管理员可看照片手工录）
     if (state.files.front && !idcard) fail('front', '人像面没识别出身份证号，请重拍或手动联系管理员');
-    // 银行卡选填：传了但没识别出卡号时只提示，不拦提交
-    var cardWarn = (state.files.card && !cardNo) ? '银行卡照片没识别出卡号，已在后台留档，可在后台手工补录' : '';
+    // 银行卡选填：识别不出只在卡片处提示重拍（applyOcr 里已提示），提交成功页不再重复说
 
     var bad1 = document.querySelector('.field.bad');
     if (bad1) { bad1.scrollIntoView({ block: 'center' }); return; }
@@ -321,7 +334,6 @@
         '<p>登记编号：<b>' + esc(j.id) + '</b></p>' +
         (upFail ? '<p class="warn">有 ' + upFail + ' 张照片没传上去，请记下编号补传</p>'
                 : '<p class="dim">证件照片已上传 ' + up + ' 张</p>') +
-        (cardWarn ? '<p class="warn">' + esc(cardWarn) + '</p>' : '') +
         '<p class="dim">请截图保存该编号</p>' +
         '<div class="donebtns"><button class="ghost" onclick="location.reload()">再登记一位</button></div></div>';
       window.scrollTo({ top: 0, behavior: 'smooth' });

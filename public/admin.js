@@ -158,6 +158,7 @@
         if (o.num) rows.push(`<div>照片上的号码</div><div>${esc(o.num)}</div>`);
         if (o.typed) rows.push(`<div>表单填的号码</div><div>${esc(o.typed)}</div>`);
         if (o.name) rows.push(`<div>照片上的姓名</div><div>${esc(o.name)}</div>`);
+        if (o.address) rows.push(`<div>住址</div><div>${esc(o.address)}</div>`);
         if (o.imageStatus && o.imageStatus !== 'normal') rows.push(`<div>图像质量</div><div>${esc(o.imageStatus)}</div>`);
         if (o.riskType && o.riskType !== 'normal') rows.push(`<div>翻拍风险</div><div>${esc(o.riskType)}</div>`);
       }
