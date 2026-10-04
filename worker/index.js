@@ -336,6 +336,103 @@ async function ocrNow(request, env) {
   return json({ ok: false, error: (tried[0] && tried[0].error) || '识别失败', tried }, 200);
 }
 
+/* ---------------- 员工信息登记表：独立表 / 独立 key 前缀 / 独立后台 ----------------
+ * 与入职考察问卷完全隔离：employees 表 + employee/ 前缀的 R2 对象，互不干扰、编号各算各的
+ */
+
+async function employeeSubmit(request, env) {
+  if (!env.DB) return json({ ok: false, error: '数据库未绑定' }, 500);
+  let b;
+  try { b = await request.json(); }
+  catch (e) { return json({ ok: false, error: '请求格式错误' }, 400); }
+
+  const data = (b && b.data) || {};
+  const name = String(data.name || '').trim();
+  const phone = String(data.phone || '').trim();
+  const idcard = normalizeId(data.idcard || '');
+  if (!name) return json({ ok: false, error: '请填写姓名' }, 400);
+  if (!/^1[3-9]\d{9}$/.test(phone)) return json({ ok: false, error: '手机号格式不正确' }, 400);
+  if (!/^\d{17}[\dXx]$/.test(idcard)) return json({ ok: false, error: '身份证号格式不正确' }, 400);
+
+  try {
+    const res = await env.DB.prepare(
+      'INSERT INTO employees (created_at, name, phone, idcard, card_no, card_bank, payload) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).bind(
+      new Date().toISOString(), name, phone, idcard,
+      String(data.card_no || ''), String(data.card_bank || ''), JSON.stringify(data)
+    ).run();
+    return json({ ok: true, id: res.meta && res.meta.last_row_id ? res.meta.last_row_id : 0 });
+  } catch (e) {
+    return json({ ok: false, error: '写入失败：' + (e.message || e) }, 500);
+  }
+}
+
+async function employeeResults(request, env, url) {
+  if (!env.DB) return json({ ok: false, error: '数据库未绑定' }, 500);
+  if (!adminOk(url, env)) return json({ ok: false, error: '口令错误' }, 401);
+
+  const id = String(url.searchParams.get('id') || '');
+  try {
+    if (id) {
+      if (!/^\d+$/.test(id)) return json({ ok: false, error: 'id 无效' }, 400);
+      const row = await env.DB.prepare('SELECT * FROM employees WHERE id = ?').bind(id).first();
+      if (!row) return json({ ok: false, error: '记录不存在' }, 404);
+      return json({ ok: true, item: { ...row, payload: safeParse(row.payload) } });
+    }
+    const r = await env.DB.prepare(
+      'SELECT id, created_at, name, phone, idcard, card_no, card_bank FROM employees ORDER BY id DESC LIMIT 500'
+    ).all();
+    return json({ ok: true, list: (r && r.results) || [] });
+  } catch (e) {
+    return json({ ok: false, error: '查询失败：' + (e.message || e) }, 500);
+  }
+}
+
+async function employeePhoto(request, env, url) {
+  if (!adminOk(url, env)) return new Response('口令错误', { status: 401 });
+  if (!env.IDCARDS) return new Response('未绑定 R2 存储桶', { status: 500 });
+  const id = String(url.searchParams.get('id') || '');
+  const side = String(url.searchParams.get('side') || '');
+  if (!/^\d+$/.test(id) || !['front', 'back', 'selfie'].includes(side)) {
+    return new Response('参数无效', { status: 400 });
+  }
+  try {
+    const obj = await env.IDCARDS.get(`employee/${id}_${side}.jpg`);
+    if (!obj) return new Response('照片不存在', { status: 404 });
+    const type = (obj.httpMetadata && obj.httpMetadata.contentType) || 'image/jpeg';
+    return new Response(obj.body, {
+      headers: { 'Content-Type': type, 'Cache-Control': 'private, max-age=3600' },
+    });
+  } catch (e) {
+    return new Response('读取失败', { status: 500 });
+  }
+}
+
+/* 员工照片上传：走独立前缀 employee/，与问卷的 idcard/ 隔开 */
+async function employeeUpload(request, env) {
+  if (!env.IDCARDS) return json({ ok: false, error: '未绑定 R2 存储桶' }, 500);
+  let form;
+  try { form = await request.formData(); }
+  catch (e) { return json({ ok: false, error: '上传格式错误' }, 400); }
+
+  const id = String(form.get('id') || '');
+  const side = String(form.get('side') || '');
+  const file = form.get('file');
+  if (!/^\d{1,12}$/.test(id)) return json({ ok: false, error: '编号无效' }, 400);
+  if (!['front', 'back', 'selfie'].includes(side)) return json({ ok: false, error: '照片类型无效' }, 400);
+  if (!file || typeof file === 'string') return json({ ok: false, error: '未收到图片' }, 400);
+  if (!/^image\//.test(file.type || '')) return json({ ok: false, error: '仅支持图片文件' }, 400);
+  if (file.size > 8 * 1024 * 1024) return json({ ok: false, error: '图片超过 8MB' }, 400);
+
+  const key = `employee/${id}_${side}.jpg`;
+  try {
+    await env.IDCARDS.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: 'image/jpeg' } });
+    return json({ ok: true, key: key });
+  } catch (e) {
+    return json({ ok: false, error: '写入存储失败：' + (e.message || e) }, 500);
+  }
+}
+
 /* ---------------- /api/ocr-keys：OCR 账号管理（需管理员口令） ---------------- */
 function adminOk(url, env) {
   return env.ADMIN_TOKEN && url.searchParams.get('token') === env.ADMIN_TOKEN;
@@ -412,6 +509,22 @@ export default {
     }
     if (path === '/api/ocr-keys') {
       return ocrKeys(request, env, url);
+    }
+    if (path === '/api/employee/submit') {
+      if (method !== 'POST') return json({ ok: false, error: '仅支持 POST' }, 405);
+      return employeeSubmit(request, env);
+    }
+    if (path === '/api/employee/results') {
+      if (method !== 'GET') return json({ ok: false, error: '仅支持 GET' }, 405);
+      return employeeResults(request, env, url);
+    }
+    if (path === '/api/employee/photo') {
+      if (method !== 'GET') return json({ ok: false, error: '仅支持 GET' }, 405);
+      return employeePhoto(request, env, url);
+    }
+    if (path === '/api/employee/upload') {
+      if (method !== 'POST') return json({ ok: false, error: '仅支持 POST' }, 405);
+      return employeeUpload(request, env);
     }
     if (path.startsWith('/api/')) {
       return json({ ok: false, error: '接口不存在' }, 404);

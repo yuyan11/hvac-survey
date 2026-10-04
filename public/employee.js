@@ -266,9 +266,9 @@
 
     try {
       // 先建记录拿到编号，再把三张图传上去（和主问卷一致）
-      var res = await fetch('/api/submit', {
+      var res = await fetch('/api/employee/submit', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ form: 'employee', data: payload }),
+        body: JSON.stringify({ data: payload }),
       });
       var j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || '提交失败');
@@ -282,7 +282,7 @@
         fd.append('side', sides[nm]);
         fd.append('file', state.files[nm].blob, nm + '.jpg');
         try {
-          var r2 = await fetch('/api/upload', { method: 'POST', body: fd });
+          var r2 = await fetch('/api/employee/upload', { method: 'POST', body: fd });
           var j2 = await r2.json();
           if (j2 && j2.ok) up++; else upFail++;
         } catch (x) { upFail++; }

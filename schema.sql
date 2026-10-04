@@ -29,3 +29,18 @@ CREATE TABLE IF NOT EXISTS ocr_keys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ocr_keys_enabled ON ocr_keys (enabled, provider);
+
+-- 员工信息登记表：与入职考察问卷（submissions）完全独立的表
+-- 照片也走独立前缀 employee/{编号}_{front|back|selfie}.jpg，两边编号各算各的
+CREATE TABLE IF NOT EXISTS employees (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  phone      TEXT NOT NULL,
+  idcard     TEXT NOT NULL,               -- 身份证号（OCR 自动填）
+  card_no    TEXT,                        -- 银行卡号（OCR 自动填）
+  card_bank  TEXT,                        -- 开户行（OCR 自动填）
+  payload    TEXT NOT NULL                -- 完整 JSON，含 OCR 原始结果
+);
+
+CREATE INDEX IF NOT EXISTS idx_employees_created ON employees (created_at DESC);
