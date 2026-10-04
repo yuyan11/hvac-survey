@@ -193,13 +193,17 @@ export function employeeSheet(items, photos) {
  * @param {{survey?:Array, employee?:Array, surveyPhotos?:Map, employeePhotos?:Map}} opts
  * @returns {Promise<Uint8Array|null>} 都没数据时返回 null
  */
-export async function buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, surveyName, employeeName, fillerBytes }) {
+export async function buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, surveyName, employeeName, fillerImages }) {
   const sheets = [];
   if (survey && survey.length) sheets.push({ name: surveyName || '入职与技能考察登记表', rows: surveySheet(survey, surveyPhotos) });
   if (employee && employee.length) sheets.push({ name: employeeName || '员工信息登记', rows: employeeSheet(employee, employeePhotos) });
-  // 仅用于实测邮件体积上限：塞一段不可压缩的随机字节当「图片」，让附件体积可控
-  if (fillerBytes) {
-    sheets.push({ name: '体积填充', rows: [['填充'], [{ img: { data: fillerBytes, ext: 'jpeg' } }]] });
+  // 仅用于实测邮件体积上限：塞若干「真实照片」当填充，保证附件是完全正常的 xlsx
+  if (fillerImages && fillerImages.length) {
+    const rows = [['体积填充']];
+    for (let i = 0; i < fillerImages.length; i += 10) {
+      rows.push(fillerImages.slice(i, i + 10).map(b => ({ img: { data: b, ext: 'jpeg' } })));
+    }
+    sheets.push({ name: '体积填充', rows });
   }
   if (!sheets.length) return null;
   return buildXlsx(sheets);
@@ -285,6 +289,22 @@ export function randomBytes(n) {
   return buf;
 }
 
+/* 临时：把 R2 里的一张真实照片重复到指定体积，用来实测邮件附件上限 */
+async function fillerPhotos(env, targetBytes) {
+  const out = [];
+  if (!env.IDCARDS || !targetBytes) return out;
+  for (const key of ['employee/3_front.jpg', 'idcard/3_front.jpg']) {
+    const obj = await env.IDCARDS.get(key);
+    if (!obj) continue;
+    const one = new Uint8Array(await obj.arrayBuffer());
+    if (!one.length) continue;
+    const n = Math.max(1, Math.ceil(targetBytes / one.length));
+    for (let i = 0; i < n; i += 1) out.push(one);
+    return out;
+  }
+  return out;
+}
+
 export async function sendMail(env, { to, subject, html, text, from, fromName, attachment }) {
   if (!env.EMAIL) {
     const e = new Error('Worker 还没绑定邮件发送（send_email 绑定名 EMAIL）');
@@ -358,8 +378,8 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
     employeePhotos = ep && ep.map;
   }
 
-  const fillerBytes = padBytes ? randomBytes(padBytes) : null;
-  const bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, fillerBytes });
+  const fillerImages = await fillerPhotos(env, padBytes);
+  const bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, fillerImages });
   const day = toLabel.slice(0, 10);
   const subject = test
     ? `【测试${label ? '·' + label : ''}】暖通招聘登记 · ${day}（${survey.length} 份问卷 / ${employee.length} 份员工登记）`
