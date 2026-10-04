@@ -657,7 +657,6 @@ async function mailTest(request, env, url) {
       recipients, test: true,
       label: padMb ? `附件 ${padMb}MB` : '',
       padBytes,
-      withPhotos: !padBytes,   // 实测体积时不再叠照片，避免多个变量
     });
     await logMail(env, {
       to: recipients.join(','), subject: useRange ? `手动发送 ${b.from}~${b.to}` : '手动发送（最近 7 天）',

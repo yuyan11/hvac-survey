@@ -330,7 +330,7 @@ export async function sendMail(env, { to, subject, html, text, from, fromName, a
 }
 
 /** 邮件正文：新增记录速览 */
-function digestHtml(fromLabel, toLabel, survey, employee) {
+function digestHtml(fromLabel, toLabel, survey, employee, note) {
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const block = (title, items, cols) => {
     if (!items.length) return `<h3 style="margin:18px 0 6px">${title}：0 条</h3>`;
@@ -343,6 +343,7 @@ function digestHtml(fromLabel, toLabel, survey, employee) {
   const surveyOcr = it => ocrText(it.ocr) || '未核验';
   return `<div style="font-family:-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;color:#222">
   <p>统计区间（北京时间）：<b>${fromLabel} → ${toLabel}</b></p>
+  ${note ? `<p style="background:#fff8e6;border:1px solid #f0d9a0;padding:8px 10px;border-radius:6px;font-size:13px">${esc(note)}</p>` : ''}
   ${block('入职与技能考察登记表', survey, [['编号', it => it.id], ['姓名', it => it.name || '—'], ['电话', it => it.phone || '—'], ['身份证核验', surveyOcr], ['提交时间', it => bjDate(it.created_at)]])}
   ${block('员工信息登记', employee, [['编号', it => it.id], ['姓名', it => it.name || '—'], ['手机号', it => it.phone || '—'], ['身份证号', it => it.idcard || ''], ['登记时间', it => bjDate(it.created_at)]])}
   <p style="margin-top:20px;color:#666">完整表格见附件 xlsx。也可在后台按日期区间导出：<br>
@@ -379,7 +380,20 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
   }
 
   const fillerImages = await fillerPhotos(env, padBytes);
-  const bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, fillerImages });
+  const sizeTest = !!(fillerImages && fillerImages.length);
+  let bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, fillerImages });
+
+  // 邮件总大小有硬上限（实测 base64 后超过约 5MiB 会被拒发）→ 超了先去掉照片，再超就不带附件
+  const MAX_ATTACH = 3 * 1024 * 1024;
+  let photoNote = '';
+  if (!sizeTest && bytes && bytes.length > MAX_ATTACH) {
+    bytes = await buildWorkbook({ survey, employee });
+    photoNote = '本期新增较多、附件超过邮件体积上限，已自动去掉证件照；需要看证件照请在后台按日期导出。';
+  }
+  if (!sizeTest && bytes && bytes.length > MAX_ATTACH) {
+    bytes = null;
+    photoNote = '本期数据量过大、附件超过邮件体积上限，本封只发统计与名单；完整表格请在后台导出。';
+  }
   const day = toLabel.slice(0, 10);
   const subject = test
     ? `【测试${label ? '·' + label : ''}】暖通招聘登记 · ${day}（${survey.length} 份问卷 / ${employee.length} 份员工登记）`
@@ -390,8 +404,9 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
     subject,
     from: cfg.from,
     fromName: cfg.fromName,
-    html: digestHtml(fromLabel, toLabel, survey, employee),
-    text: `统计区间 ${fromLabel} → ${toLabel}：问卷 ${survey.length} 条，员工登记 ${employee.length} 条。完整数据（证件照已嵌在表格里）见附件。`,
+    html: digestHtml(fromLabel, toLabel, survey, employee, photoNote),
+    text: `统计区间 ${fromLabel} → ${toLabel}：问卷 ${survey.length} 条，员工登记 ${employee.length} 条。`
+      + (photoNote ? photoNote : '完整数据（证件照已嵌在表格里）见附件。'),
     attachment: bytes ? { content: bytes, filename: `survey-report-${day}.xlsx` } : null,
   });
 
