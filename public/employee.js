@@ -168,7 +168,10 @@
         delete state.ocr[name];
         refresh(name);
         bad(name, true);
-        errOf(name).textContent = j.error || '这张不像证件，请重拍';
+        // 照片被退回，之前由 OCR 填进去的号码也得清掉，否则会带着别人的号提交
+        var el = errOf(name); if (el) el.textContent = j.error || '这张不像证件，请重拍';
+        if (name === 'front') setVal('idcard', '');
+        if (name === 'card') { setVal('card_no', ''); setVal('card_bank', ''); }
         ocrLine(name, j.error || '这张不像证件，请重拍', 'warn');
         toast(j.error || '这张不像证件，请重拍');
         return;
