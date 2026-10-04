@@ -73,8 +73,7 @@
       '<button class="btn gray" id="csv">导出 CSV</button><button class="btn gray" id="logout">退出</button></div>' +
       '<div class="tblwrap"><table><thead><tr>' +
       '<th>编号</th><th>姓名</th><th>手机号</th><th>身份证号</th><th>银行卡号</th><th>开户行</th><th>登记时间</th><th>操作</th>' +
-      '</tr></thead><tbody>' + (rows || '<tr><td colspan="8" class="empty">暂无数据</td></tr>') + '</tbody></table></div>' +
-      '<div id="dtl"></div>';
+      '</tr></thead><tbody>' + (rows || '<tr><td colspan="8" class="empty">暂无数据</td></tr>') + '</tbody></table></div>';
 
     $('#refresh').onclick = load;
     $('#logout').onclick = function () { token = ''; login(); };
@@ -130,7 +129,7 @@
         if (card.bankName) add('OCR 开户行', card.bankName);
         if (card.holderName) add('OCR 持卡人', card.holderName);
 
-        $('#dtl').innerHTML =
+        $('#host').innerHTML =
           '<div class="tblwrap detail"><div style="padding:18px">' +
           '<p><button class="btn gray" id="back">← 返回列表</button></p>' +
           '<h2>' + esc(it.name) + ' <span style="font-size:14px;color:var(--dim)">#' + it.id + '</span></h2>' +
@@ -138,8 +137,8 @@
           '<h3>证件照片</h3><div class="idcardimgs">' + figs + '</div>' +
           '<h3>登记信息</h3><div class="kv">' + kv.join('') + '</div>' +
           '</div></div>';
-        $('#back').onclick = function () { $('#dtl').innerHTML = ''; window.scrollTo({ top: 0, behavior: 'smooth' }); };
-        $('#dtl').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        $('#back').onclick = function () { render(cur || []); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       });
   }
 
