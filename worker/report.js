@@ -15,6 +15,14 @@ import { SURVEY_HEAD, SURVEY_FIELDS, EMPLOYEE_HEAD } from './columns.js';
 const BJ_MS = 8 * 3600 * 1000;
 const DAY_MS = 24 * 3600 * 1000;
 
+/* 邮件体积（2026-10-04 实测，收件人是已验证目的地址）：
+ *   附件原始大小 6 / 13 / 17 MB → 发送成功；19 MB → 「email too large」；20 MB → 内部错误。
+ * 对应「整封 base64 后 ≈ 25 MiB」这条官方上限（已验证目的地址的额度）。
+ *   照片预算 7MB/表：正常一天的新增远达不到，真超了也会自动降级去掉照片。
+ *   硬阈值 16MB：留 1MB 给正文与 MIME 头。 */
+const PHOTO_BUDGET = 7 * 1024 * 1024;
+const MAX_ATTACH = 16 * 1024 * 1024;
+
 /* ---------------- 时间 ---------------- */
 const pad = n => String(n).padStart(2, '0');
 
@@ -193,18 +201,10 @@ export function employeeSheet(items, photos) {
  * @param {{survey?:Array, employee?:Array, surveyPhotos?:Map, employeePhotos?:Map}} opts
  * @returns {Promise<Uint8Array|null>} 都没数据时返回 null
  */
-export async function buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, surveyName, employeeName, fillerImages }) {
+export async function buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, surveyName, employeeName }) {
   const sheets = [];
   if (survey && survey.length) sheets.push({ name: surveyName || '入职与技能考察登记表', rows: surveySheet(survey, surveyPhotos) });
   if (employee && employee.length) sheets.push({ name: employeeName || '员工信息登记', rows: employeeSheet(employee, employeePhotos) });
-  // 仅用于实测邮件体积上限：塞若干「真实照片」当填充，保证附件是完全正常的 xlsx
-  if (fillerImages && fillerImages.length) {
-    const rows = [['体积填充']];
-    for (let i = 0; i < fillerImages.length; i += 10) {
-      rows.push(fillerImages.slice(i, i + 10).map(b => ({ img: { data: b, ext: 'jpeg' } })));
-    }
-    sheets.push({ name: '体积填充', rows });
-  }
   if (!sheets.length) return null;
   return buildXlsx(sheets);
 }
@@ -280,29 +280,13 @@ function toBase64(bytes) {
   return btoa(bin);
 }
 
-/* 随机字节：用于实测邮件体积上限（不可压缩，才能真实撑出体积） */
+/* 随机字节：仅测试用（保留给以后复测邮件体积上限时用） */
 export function randomBytes(n) {
   const buf = new Uint8Array(n);
   for (let off = 0; off < n; off += 65536) {
     crypto.getRandomValues(buf.subarray(off, Math.min(off + 65536, n)));
   }
   return buf;
-}
-
-/* 临时：把 R2 里的一张真实照片重复到指定体积，用来实测邮件附件上限 */
-async function fillerPhotos(env, targetBytes) {
-  const out = [];
-  if (!env.IDCARDS || !targetBytes) return out;
-  for (const key of ['employee/3_front.jpg', 'idcard/3_front.jpg']) {
-    const obj = await env.IDCARDS.get(key);
-    if (!obj) continue;
-    const one = new Uint8Array(await obj.arrayBuffer());
-    if (!one.length) continue;
-    const n = Math.max(1, Math.ceil(targetBytes / one.length));
-    for (let i = 0; i < n; i += 1) out.push(one);
-    return out;
-  }
-  return out;
 }
 
 export async function sendMail(env, { to, subject, html, text, from, fromName, attachment }) {
@@ -355,7 +339,7 @@ function digestHtml(fromLabel, toLabel, survey, employee, note) {
  * 生成并发送一期汇总。不判断是否需要发（由调用方决定）。
  * @returns {Promise<{ok:boolean, count:number, message:string}>}
  */
-export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, recipients, test, label, withPhotos = true, padBytes = 0 }) {
+export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, recipients, test, label, withPhotos = true }) {
   const cfg = await getMailConfig(env);
   const to = recipients && recipients.length ? recipients : cfg.recipients;
   if (!to.length) return { ok: false, count: 0, message: '还没设置收件邮箱' };
@@ -365,32 +349,29 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
     fetchEmployees(env, fromIso, toIso),
   ]);
   const count = survey.length + employee.length;
-  if (!count && !test && !padBytes) return { ok: true, count: 0, message: '区间内没有新增，跳过发送' };
+  if (!count && !test) return { ok: true, count: 0, message: '区间内没有新增，跳过发送' };
 
-  // 邮件附件的总大小受 25MiB 限制（还要再 base64 膨胀 1/3），所以给图片单独留个更紧的预算
+  // 照片体积预算（每张表）：邮件总大小上限 25MiB（base64 后），换算成原始附件约 17MB 是实测能过的
   let surveyPhotos = null;
   let employeePhotos = null;
   if (withPhotos) {
     const [sp, ep] = await Promise.all([
-      survey.length ? loadPhotos(env, 'idcard', survey, 6 * 1024 * 1024) : null,
-      employee.length ? loadPhotos(env, 'employee', employee, 6 * 1024 * 1024) : null,
+      survey.length ? loadPhotos(env, 'idcard', survey, PHOTO_BUDGET) : null,
+      employee.length ? loadPhotos(env, 'employee', employee, PHOTO_BUDGET) : null,
     ]);
     surveyPhotos = sp && sp.map;
     employeePhotos = ep && ep.map;
   }
 
-  const fillerImages = await fillerPhotos(env, padBytes);
-  const sizeTest = !!(fillerImages && fillerImages.length);
-  let bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, fillerImages });
+  let bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos });
 
-  // 邮件总大小有硬上限（实测 base64 后超过约 5MiB 会被拒发）→ 超了先去掉照片，再超就不带附件
-  const MAX_ATTACH = 3 * 1024 * 1024;
+  // 兜底：万一还是超了（照片体积估不准），先去掉照片，再超就不带附件——绝不能整封发不出去
   let photoNote = '';
-  if (!sizeTest && bytes && bytes.length > MAX_ATTACH) {
+  if (bytes && bytes.length > MAX_ATTACH) {
     bytes = await buildWorkbook({ survey, employee });
     photoNote = '本期新增较多、附件超过邮件体积上限，已自动去掉证件照；需要看证件照请在后台按日期导出。';
   }
-  if (!sizeTest && bytes && bytes.length > MAX_ATTACH) {
+  if (bytes && bytes.length > MAX_ATTACH) {
     bytes = null;
     photoNote = '本期数据量过大、附件超过邮件体积上限，本封只发统计与名单；完整表格请在后台导出。';
   }

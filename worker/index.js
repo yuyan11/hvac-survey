@@ -652,17 +652,11 @@ async function mailTest(request, env, url) {
   const fromIso = useRange ? dayStartUtc(rf) : new Date(Date.now() - 7 * 86400000).toISOString();
   const toIso = useRange ? dayEndUtc(rt) : new Date().toISOString();
 
-  // 临时开关：pad=<MB> 时把一段不可压缩的随机字节塞进 xlsx，用来实测邮件体积上限
-  const padMb = Number(b.pad || 0);
-  const padBytes = (padMb > 0 && padMb <= 60) ? Math.round(padMb * 1024 * 1024) : 0;
-
   try {
     const res = await sendDigest(env, {
       fromIso, toIso,
       fromLabel: bjDate(fromIso), toLabel: bjDate(toIso),
       recipients, test: true,
-      label: padMb ? `附件 ${padMb}MB` : '',
-      padBytes,
     });
     await logMail(env, {
       to: recipients.join(','), subject: useRange ? `手动发送 ${rf}~${rt}` : '手动发送（最近 7 天）',
