@@ -68,7 +68,8 @@ async function makeZip(entries) {
   for (const e of entries) {
     const raw = typeof e.data === 'string' ? enc.encode(e.data) : e.data;
     const crc = crc32(raw);
-    let comp = await deflateRaw(raw);
+    // 大块（照片等已是压缩格式的二进制）压缩基本没收益，却要白烧一遍 CPU、多占一倍内存 → 直接 STORE
+    let comp = raw.length > 4 * 1024 * 1024 ? null : await deflateRaw(raw);
     let method = 8;
     if (!comp || comp.length >= raw.length) { comp = raw; method = 0; }
 

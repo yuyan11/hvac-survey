@@ -201,10 +201,14 @@ export function employeeSheet(items, photos) {
  * @param {{survey?:Array, employee?:Array, surveyPhotos?:Map, employeePhotos?:Map}} opts
  * @returns {Promise<Uint8Array|null>} 都没数据时返回 null
  */
-export async function buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, surveyName, employeeName }) {
+export async function buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, surveyName, employeeName, fillerBytes }) {
   const sheets = [];
   if (survey && survey.length) sheets.push({ name: surveyName || '入职与技能考察登记表', rows: surveySheet(survey, surveyPhotos) });
   if (employee && employee.length) sheets.push({ name: employeeName || '员工信息登记', rows: employeeSheet(employee, employeePhotos) });
+  // 【仅体积实测用】塞一大段不可压缩字节当「图片」，把附件撑到指定大小
+  if (fillerBytes && fillerBytes.length) {
+    sheets.push({ name: '体积测试', rows: [['体积填充'], [{ img: { data: fillerBytes, ext: 'jpeg' } }]] });
+  }
   if (!sheets.length) return null;
   return buildXlsx(sheets);
 }
@@ -339,7 +343,7 @@ function digestHtml(fromLabel, toLabel, survey, employee, note) {
  * 生成并发送一期汇总。不判断是否需要发（由调用方决定）。
  * @returns {Promise<{ok:boolean, count:number, message:string}>}
  */
-export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, recipients, test, label, withPhotos = true }) {
+export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, recipients, test, label, withPhotos = true, padBytes = 0 }) {
   const cfg = await getMailConfig(env);
   const to = recipients && recipients.length ? recipients : cfg.recipients;
   if (!to.length) return { ok: false, count: 0, message: '还没设置收件邮箱' };
@@ -349,12 +353,12 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
     fetchEmployees(env, fromIso, toIso),
   ]);
   const count = survey.length + employee.length;
-  if (!count && !test) return { ok: true, count: 0, message: '区间内没有新增，跳过发送' };
+  if (!count && !test && !padBytes) return { ok: true, count: 0, message: '区间内没有新增，跳过发送' };
 
   // 照片体积预算（每张表）：邮件总大小上限 25MiB（base64 后），换算成原始附件约 17MB 是实测能过的
   let surveyPhotos = null;
   let employeePhotos = null;
-  if (withPhotos) {
+  if (withPhotos && !padBytes) {
     const [sp, ep] = await Promise.all([
       survey.length ? loadPhotos(env, 'idcard', survey, PHOTO_BUDGET) : null,
       employee.length ? loadPhotos(env, 'employee', employee, PHOTO_BUDGET) : null,
@@ -363,15 +367,17 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
     employeePhotos = ep && ep.map;
   }
 
-  let bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos });
+  const sizeTest = padBytes > 0;
+  const fillerBytes = sizeTest ? randomBytes(padBytes) : null;
+  let bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, fillerBytes });
 
   // 兜底：万一还是超了（照片体积估不准），先去掉照片，再超就不带附件——绝不能整封发不出去
   let photoNote = '';
-  if (bytes && bytes.length > MAX_ATTACH) {
+  if (!sizeTest && bytes && bytes.length > MAX_ATTACH) {
     bytes = await buildWorkbook({ survey, employee });
     photoNote = '本期新增较多、附件超过邮件体积上限，已自动去掉证件照；需要看证件照请在后台按日期导出。';
   }
-  if (bytes && bytes.length > MAX_ATTACH) {
+  if (!sizeTest && bytes && bytes.length > MAX_ATTACH) {
     bytes = null;
     photoNote = '本期数据量过大、附件超过邮件体积上限，本封只发统计与名单；完整表格请在后台导出。';
   }
