@@ -166,6 +166,8 @@ export const MAIL_DEFAULTS = {
   mail_from: 'noreply@199118.xyz',
   mail_from_name: '暖通招聘登记',
   mail_last_at: '',
+  cron_last_at: '',
+  cron_last_note: '',
 };
 
 export async function getSettings(env) {
@@ -195,6 +197,8 @@ export async function getMailConfig(env) {
     from: s.mail_from || MAIL_DEFAULTS.mail_from,
     fromName: s.mail_from_name || MAIL_DEFAULTS.mail_from_name,
     lastAt: s.mail_last_at || '',
+    cronLastAt: s.cron_last_at || '',
+    cronLastNote: s.cron_last_note || '',
   };
 }
 
@@ -289,21 +293,39 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
 }
 
 /**
+ * 定时任务入口：每次触发都把「什么时候跑的 / 结果如何」写回 app_settings，
+ * 后台因此能看到定时任务到底有没有在跑（Cloudflare 那边没有直接看 cron 触发记录的地方）。
+ */
+export async function runScheduledDigest(env, now = new Date()) {
+  let note;
+  try {
+    note = await digestTick(env, now);
+  } catch (e) {
+    note = '出错：' + ((e && e.message) || String(e));
+  }
+  try {
+    await setSetting(env, 'cron_last_at', now.toISOString());
+    await setSetting(env, 'cron_last_note', note);
+  } catch (e) { /* 心跳写不进去也不影响主流程 */ }
+  return note;
+}
+
+/**
  * 定时任务主流程：到点 → 取「上次成功发信之后」的新增 → 有就发一封
  * 同一天只发一次（发过就跳过，避免每小时重复轰炸）
  */
-export async function runScheduledDigest(env, now = new Date()) {
+async function digestTick(env, now) {
   const cfg = await getMailConfig(env);
   if (!cfg.enabled) return '未启用';
   if (!cfg.recipients.length) return '未配置收件邮箱';
 
   const { h, date } = bjHourMin(now);
-  if (h !== cfg.hour) return '未到发送时间';
+  if (h !== cfg.hour) return `未到发送时间（现在 ${h} 点，设定 ${cfg.hour} 点）`;
 
   // 今天是否已经发过（按时间戳落在今天北京时间之内判断）
   try {
     const today = await env.DB.prepare('SELECT COUNT(*) AS n FROM mail_log WHERE ok = 1 AND sent_at >= ?').bind(dayStartUtc(date)).first();
-    if (today && today.n > 0) return '今天已发送过';
+    if (today && today.n > 0) return '今天已经发过一封了';
   } catch (e) { /* mail_log 没建也不致命 */ }
 
   const fromIso = cfg.lastAt && cfg.lastAt > '2020-01-01' ? cfg.lastAt : new Date(now.getTime() - DAY_MS).toISOString();

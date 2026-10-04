@@ -234,6 +234,8 @@
         ${j.mailerReady ? '' : '<b style="color:var(--danger)">邮件发送绑定还没生效</b>，部署新版本后才会出现；'}
         逻辑：每天到点检查一次，把「上次发信之后」的新增记录打包成 xlsx 发过去；当天没有新增就不发。
         收件邮箱必须是 Cloudflare 账号里已验证的目的地址（当前已验证：948683750@qq.com）。
+        <br>定时任务最近一次运行：<b>${c.cronLastAt ? esc(localTime(c.cronLastAt)) + '（' + esc(c.cronLastNote || '') + '）' : '还没有运行记录'}</b>
+        ${c.lastAt ? '｜上次成功发送：' + esc(localTime(c.lastAt)) : ''}
       </div>
       ${log.length ? `<h3 style="margin-top:16px">最近发送</h3><div class="kv">${log.map(x => `
         <div>${esc(localTime(x.sent_at))}</div>
