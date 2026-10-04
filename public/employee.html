@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>员工信息登记表</title>
+<meta name="description" content="员工身份证与银行卡信息登记，证件自动识别">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <div class="brand">
+        <div class="logo">HR</div>
+        <div>
+          <h1>员工信息登记表</h1>
+          <p>身份证与银行卡拍照后自动识别填写</p>
+        </div>
+      </div>
+      <nav class="tabs"><a class="tab" href="/">入职考察表</a></nav>
+    </div>
+  </header>
+
+  <main class="wrap empbox">
+    <form id="empForm" autocomplete="off" novalidate>
+      <div class="group show">
+        <div class="grouptitle">基本信息</div>
+
+        <div class="field" data-field="name">
+          <div class="label">姓名 <i>*</i></div>
+          <div class="ctrl"><input type="text" name="name" placeholder="拍照识别后会自动填入，可修改"></div>
+          <div class="err"></div>
+        </div>
+
+        <div class="field" data-field="phone">
+          <div class="label">手机号 <i>*</i></div>
+          <div class="ctrl"><input type="tel" name="phone" inputmode="numeric" placeholder="11 位手机号"></div>
+          <div class="err"></div>
+        </div>
+
+        <div class="field" data-field="idcard">
+          <div class="label">身份证号</div>
+          <div class="ctrl"><input type="text" name="idcard" placeholder="由身份证人像面自动识别" readonly></div>
+          <div class="hint">从人像面自动识别，识别后不可手改</div>
+          <div class="err"></div>
+        </div>
+      </div>
+
+      <div class="group show">
+        <div class="grouptitle">身份证</div>
+
+        <div class="field" data-field="front">
+          <div class="label">身份证 · 人像面 <i>*</i></div>
+          <div class="ctrl">
+            <div class="photobox" data-name="front" data-kind="idcard" data-side="front">
+              <div class="photobtns">
+                <label class="pbtn">选择照片<input type="file" accept="image/*" hidden></label>
+                <label class="pbtn">拍照上传<input type="file" accept="image/*" capture="environment" hidden></label>
+              </div>
+              <div class="preview"><span class="ph">未上传</span></div>
+            </div>
+          </div>
+          <div class="hint">请横向正对拍摄，四角完整</div>
+          <div class="ocrline" data-for="front"></div>
+          <div class="err"></div>
+        </div>
+
+        <div class="field" data-field="back">
+          <div class="label">身份证 · 国徽面 <i>*</i></div>
+          <div class="ctrl">
+            <div class="photobox" data-name="back" data-kind="idcard" data-side="back">
+              <div class="photobtns">
+                <label class="pbtn">选择照片<input type="file" accept="image/*" hidden></label>
+                <label class="pbtn">拍照上传<input type="file" accept="image/*" capture="environment" hidden></label>
+              </div>
+              <div class="preview"><span class="ph">未上传</span></div>
+            </div>
+          </div>
+          <div class="hint">用于核对签发机关与有效期限</div>
+          <div class="ocrline" data-for="back"></div>
+          <div class="err"></div>
+        </div>
+      </div>
+
+      <div class="group show">
+        <div class="grouptitle">工资卡</div>
+
+        <div class="field" data-field="card">
+          <div class="label">银行卡照片 <i>*</i></div>
+          <div class="ctrl">
+            <div class="photobox" data-name="card" data-kind="bankcard" data-side="front">
+              <div class="photobtns">
+                <label class="pbtn">选择照片<input type="file" accept="image/*" hidden></label>
+                <label class="pbtn">拍照上传<input type="file" accept="image/*" capture="environment" hidden></label>
+              </div>
+              <div class="preview"><span class="ph">未上传</span></div>
+            </div>
+          </div>
+          <div class="hint">请拍正面，完整露出卡号</div>
+          <div class="ocrline" data-for="card"></div>
+          <div class="err"></div>
+        </div>
+
+        <div class="field" data-field="card_no">
+          <div class="label">银行卡号</div>
+          <div class="ctrl"><input type="text" name="card_no" placeholder="由银行卡照片自动识别" readonly></div>
+          <div class="err"></div>
+        </div>
+
+        <div class="field" data-field="card_bank">
+          <div class="label">开户行</div>
+          <div class="ctrl"><input type="text" name="card_bank" placeholder="自动识别" readonly></div>
+          <div class="err"></div>
+        </div>
+      </div>
+
+      <div class="empfoot">
+        <button type="submit" class="btn" id="empSubmit">提交登记</button>
+        <p class="dim" id="empMsg"></p>
+      </div>
+    </form>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <span>本页仅用于内部登记，信息不对外公开</span>
+      <a href="/admin.html">管理员入口</a>
+    </div>
+  </footer>
+
+  <script src="employee.js"></script>
+</body>
+</html>

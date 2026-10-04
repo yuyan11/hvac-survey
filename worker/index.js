@@ -11,6 +11,20 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
+import { ocrWithProvider, normalizeId, PROVIDER_LABEL } from './ocr.js';
+
+/* 当月字符串，形如 2026-09 —— 免费额度按自然月重置，用它标记某个账号本月是否已耗尽 */
+function monthKey() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+async function bumpKeyFail(env, kid) {
+  try {
+    await env.DB.prepare('UPDATE ocr_keys SET fail_count = COALESCE(fail_count,0)+1, updated_at = ? WHERE id = ?')
+      .bind(new Date().toISOString(), kid).run();
+  } catch (e) { /* 记账失败不影响主流程 */ }
+}
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -167,6 +181,200 @@ async function photo(request, env) {
   }
 }
 
+/* ---------------- POST /api/verify：OCR 核对身份证号 ----------------
+ * 取 R2 里的人像面 → 按「厂商 + 账号」顺序尝试 OCR → 与填写的号码比对
+ * 某个账号额度用完（ERR_QUOTA）就标记为本月耗尽，自动跳下一个账号 / 下一家厂商
+ */
+async function verify(request, env) {
+  if (!env.DB) return json({ ok: false, error: '数据库未绑定' }, 500);
+
+  let body;
+  try { body = await request.json(); }
+  catch (e) { return json({ ok: false, error: '请求格式错误' }, 400); }
+
+  const id = String((body && body.id) || '');
+  if (!/^\d{1,12}$/.test(id)) return json({ ok: false, error: '编号无效' }, 400);
+
+  const row = await env.DB.prepare('SELECT id, created_at, payload, ocr FROM submissions WHERE id = ?').bind(id).first();
+  if (!row) return json({ ok: false, error: '记录不存在' }, 404);
+
+  // 已经核过就直接返回，避免重复消耗额度
+  if (row.ocr) {
+    try { return json({ ok: true, cached: true, ...JSON.parse(row.ocr) }); }
+    catch (e) { /* 解析失败就重新核一次 */ }
+  }
+
+  // 防刷：只对提交后 6 小时内的记录做核验
+  const age = Date.now() - new Date(row.created_at).getTime();
+  if (age > 6 * 3600 * 1000) return json({ ok: false, error: '已超过可核验时间' }, 403);
+
+  if (!env.IDCARDS) return json({ ok: false, error: '未绑定 R2 存储桶' }, 500);
+  const obj = await env.IDCARDS.get(`idcard/${id}_front.jpg`);
+  if (!obj) return json({ ok: false, error: '还没有身份证人像面照片' }, 404);
+  const bytes = await obj.arrayBuffer();
+
+  const m = monthKey();
+  const ks = await env.DB.prepare(
+    `SELECT id, provider, label, creds, fail_count FROM ocr_keys
+     WHERE enabled = 1 AND (exhausted_month IS NULL OR exhausted_month = '' OR exhausted_month <> ?)
+     ORDER BY fail_count ASC, id ASC`
+  ).bind(m).all();
+  const list = (ks && ks.results) || [];
+  if (!list.length) return json({ ok: false, error: '没有可用的 OCR 账号（额度都耗尽或未配置）' }, 503);
+
+  const typed = normalizeId((safeParse(row.payload) || {}).idcard || '');
+  const tried = [];
+
+  for (const k of list) {
+    let creds = null;
+    try { creds = JSON.parse(k.creds); } catch (e) { creds = null; }
+    if (!creds) { await bumpKeyFail(env, k.id); tried.push({ provider: k.provider, error: '账号密钥格式错误' }); continue; }
+
+    try {
+      const now = new Date().toISOString();
+      const r = await ocrWithProvider(k.provider, creds, bytes);
+      const matched = !!(r.num && typed && r.num === typed);
+      const result = {
+        ok: true,
+        provider: k.provider,
+        providerLabel: PROVIDER_LABEL[k.provider] || k.provider,
+        num: r.num || '',
+        name: r.name || '',
+        typed: typed,
+        matched: matched,
+        at: now,
+      };
+      await env.DB.prepare('UPDATE ocr_keys SET fail_count = 0, updated_at = ? WHERE id = ?').bind(now, k.id).run();
+      await env.DB.prepare('UPDATE submissions SET ocr = ? WHERE id = ?').bind(JSON.stringify(result), id).run();
+      return json(result);
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      tried.push({ provider: k.provider, error: msg.slice(0, 140) });
+      if (e && e.quota) {
+        await env.DB.prepare('UPDATE ocr_keys SET exhausted_month = ?, updated_at = ? WHERE id = ?')
+          .bind(m, new Date().toISOString(), k.id).run();
+      } else {
+        await bumpKeyFail(env, k.id);
+      }
+    }
+  }
+
+  return json({ ok: false, error: '所有 OCR 账号都调用失败', tried }, 502);
+}
+
+/* ---------------- POST /api/ocr：即时识别（员工填表时自动填姓名/卡号） ----------------
+ * body: { kind: 'idcard' | 'bankcard', side?: 'front'|'back', image: base64(无 data URI 头) }
+ * 简单的按 isolate 滑动窗口限流，防止被人当免费 OCR 接口刷
+ */
+const ocrHits = new Map();
+
+function rateLimited(key, max, windowMs) {
+  const now = Date.now();
+  const arr = (ocrHits.get(key) || []).filter(t => now - t < windowMs);
+  arr.push(now);
+  ocrHits.set(key, arr);
+  if (ocrHits.size > 500) ocrHits.clear();
+  return arr.length > max;
+}
+
+async function ocrNow(request, env) {
+  if (!env.DB) return json({ ok: false, error: '数据库未绑定' }, 500);
+
+  let b;
+  try { b = await request.json(); }
+  catch (e) { return json({ ok: false, error: '请求格式错误' }, 400); }
+
+  const kind = String((b && b.kind) || '');
+  if (!['idcard', 'bankcard'].includes(kind)) return json({ ok: false, error: 'kind 只支持 idcard / bankcard' }, 400);
+  const side = String((b && b.side) || 'front');
+
+  const ip = request.headers.get('cf-connecting-ip') || 'anon';
+  if (rateLimited(ip + ':' + kind, 25, 10 * 60 * 1000)) {
+    return json({ ok: false, error: '识别太频繁，请稍后再试' }, 429);
+  }
+
+  const img = String((b && b.image) || '');
+  if (!img || img.length < 200) return json({ ok: false, error: '缺少图片' }, 400);
+  let bytes;
+  try {
+    const bin = atob(img);
+    bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  } catch (e) { return json({ ok: false, error: '图片数据无效' }, 400); }
+
+  const m = monthKey();
+  const ks = await env.DB.prepare(
+    `SELECT id, provider, creds, fail_count FROM ocr_keys
+     WHERE enabled = 1 AND (exhausted_month IS NULL OR exhausted_month = '' OR exhausted_month <> ?)
+     ORDER BY fail_count ASC, id ASC`
+  ).bind(m).all();
+  const list = (ks && ks.results) || [];
+  if (!list.length) return json({ ok: false, error: '识别服务暂不可用（没有可用账号）' }, 503);
+
+  const tried = [];
+  for (const k of list) {
+    let creds = null;
+    try { creds = JSON.parse(k.creds); } catch (e) { creds = null; }
+    if (!creds) { await bumpKeyFail(env, k.id); continue; }
+    try {
+      const r = await ocrWithProvider(k.provider, creds, bytes.buffer, { kind: kind, side: side });
+      await env.DB.prepare('UPDATE ocr_keys SET fail_count = 0, updated_at = ? WHERE id = ?')
+        .bind(new Date().toISOString(), k.id).run();
+      return json({ ok: true, provider: k.provider, providerLabel: PROVIDER_LABEL[k.provider] || k.provider, result: r });
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      tried.push({ provider: k.provider, error: msg.slice(0, 140) });
+      if (e && e.quota) {
+        await env.DB.prepare('UPDATE ocr_keys SET exhausted_month = ?, updated_at = ? WHERE id = ?')
+          .bind(m, new Date().toISOString(), k.id).run();
+      } else {
+        await bumpKeyFail(env, k.id);
+      }
+      if (e && e.notid) break; // 「这不是身份证」属于业务问题，换账号也没用，直接返回
+    }
+  }
+  return json({ ok: false, error: (tried[0] && tried[0].error) || '识别失败', tried }, 200);
+}
+
+/* ---------------- /api/ocr-keys：OCR 账号管理（需管理员口令） ---------------- */
+function adminOk(url, env) {
+  return env.ADMIN_TOKEN && url.searchParams.get('token') === env.ADMIN_TOKEN;
+}
+
+async function ocrKeys(request, env, url) {
+  if (!env.DB) return json({ ok: false, error: '数据库未绑定' }, 500);
+  if (!adminOk(url, env)) return json({ ok: false, error: '口令错误' }, 401);
+
+  if (request.method === 'GET') {
+    const r = await env.DB.prepare(
+      'SELECT id, provider, label, enabled, exhausted_month, fail_count, updated_at FROM ocr_keys ORDER BY id'
+    ).all();
+    return json({ ok: true, list: (r && r.results) || [] });
+  }
+
+  if (request.method === 'POST') {
+    let b;
+    try { b = await request.json(); } catch (e) { return json({ ok: false, error: '请求格式错误' }, 400); }
+    const provider = String((b && b.provider) || '');
+    if (!['baidu', 'tencent', 'aliyun'].includes(provider)) return json({ ok: false, error: '厂商只支持 baidu / tencent / aliyun' }, 400);
+    const creds = b && b.creds;
+    if (!creds || typeof creds !== 'object') return json({ ok: false, error: '缺少 creds' }, 400);
+    await env.DB.prepare(
+      'INSERT INTO ocr_keys (provider, label, creds, enabled, exhausted_month, fail_count, updated_at) VALUES (?, ?, ?, 1, ?, 0, ?)'
+    ).bind(provider, String((b.label || '').slice(0, 60)), JSON.stringify(creds), '', new Date().toISOString()).run();
+    return json({ ok: true });
+  }
+
+  if (request.method === 'DELETE') {
+    const kid = String(url.searchParams.get('id') || '');
+    if (!/^\d+$/.test(kid)) return json({ ok: false, error: '缺少 id' }, 400);
+    await env.DB.prepare('DELETE FROM ocr_keys WHERE id = ?').bind(kid).run();
+    return json({ ok: true });
+  }
+
+  return json({ ok: false, error: '不支持的方法' }, 405);
+}
+
 /* ---------------- 路由 ---------------- */
 export default {
   async fetch(request, env) {
@@ -193,6 +401,17 @@ export default {
     if (path === '/api/photo') {
       if (method !== 'GET') return json({ ok: false, error: '仅支持 GET' }, 405);
       return photo(request, env);
+    }
+    if (path === '/api/verify') {
+      if (method !== 'POST') return json({ ok: false, error: '仅支持 POST' }, 405);
+      return verify(request, env);
+    }
+    if (path === '/api/ocr') {
+      if (method !== 'POST') return json({ ok: false, error: '仅支持 POST' }, 405);
+      return ocrNow(request, env);
+    }
+    if (path === '/api/ocr-keys') {
+      return ocrKeys(request, env, url);
     }
     if (path.startsWith('/api/')) {
       return json({ ok: false, error: '接口不存在' }, 404);

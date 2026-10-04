@@ -520,16 +520,52 @@
               ? `<p class="dim">身份证照片已上传 ${photo.done} 张</p>`
               : `<p class="warn">有 ${photo.fail} 张照片上传失败，请记下编号 ${esc(json.id)} 后重新填写补传</p>`)
             : ''}
+          <p class="dim" id="verifyLine">正在核对身份证…</p>
           <p class="dim">请截图保存该编号，便于后续核对</p>
           <div class="donebtns">
             <button class="ghost" onclick="location.reload()">再填一份</button>
           </div>
         </div>`;
       window.scrollTo({ top: 0, behavior: 'smooth' });
+
+      // 身份证 OCR 核验（不阻塞提交结果；失败也不影响已提交内容）
+      runVerify(json.id);
     } catch (e) {
       toast('提交失败：' + e.message + '，请稍后重试');
       btn.disabled = false;
       btn.textContent = '提交问卷';
+    }
+  }
+
+  /* 提交后调用 OCR 核对身份证：读照片上的号码，与填写的号码比对 */
+  async function runVerify(id) {
+    const line = document.getElementById('verifyLine');
+    if (!line) return;
+    try {
+      const r = await fetch('/api/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: id }),
+      });
+      const j = await r.json();
+      if (j && j.ok) {
+        if (j.matched) {
+          line.className = 'dim';
+          line.textContent = `身份证已自动核验通过（${esc(j.providerLabel || 'OCR')}）`;
+        } else if (!j.num) {
+          line.className = 'warn';
+          line.textContent = '身份证没能自动识别出号码，我们会人工核对，不必重填';
+        } else {
+          line.className = 'warn';
+          line.textContent = '照片上的号码与填写的不一致，我们会人工核对，请确认填的是本人身份证号';
+        }
+      } else {
+        line.className = 'dim';
+        line.textContent = '已收到，身份证稍后人工核对';
+      }
+    } catch (e) {
+      line.className = 'dim';
+      line.textContent = '已收到，身份证稍后人工核对';
     }
   }
 

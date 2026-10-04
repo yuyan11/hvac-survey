@@ -12,3 +12,20 @@ CREATE TABLE IF NOT EXISTS submissions (
 
 CREATE INDEX IF NOT EXISTS idx_submissions_form_time ON submissions (form, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_submissions_created ON submissions (created_at DESC);
+
+-- 身份证 OCR 核验结果（JSON），老库需单独执行一次：
+-- ALTER TABLE submissions ADD COLUMN ocr TEXT;
+
+-- OCR 账号池：多家厂商、多个账号，额度用完自动跳下一个
+CREATE TABLE IF NOT EXISTS ocr_keys (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider        TEXT NOT NULL,        -- baidu | tencent | aliyun
+  label           TEXT,                 -- 备注，如「百度·个人认证」
+  creds           TEXT NOT NULL,        -- JSON：百度 {ak,sk} / 腾讯 {id,sk} / 阿里 {ak,sk}
+  enabled         INTEGER NOT NULL DEFAULT 1,
+  exhausted_month TEXT NOT NULL DEFAULT '', -- 形如 2026-09，表示本月额度已耗尽
+  fail_count      INTEGER NOT NULL DEFAULT 0,
+  updated_at      TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_ocr_keys_enabled ON ocr_keys (enabled, provider);
