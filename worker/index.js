@@ -14,7 +14,7 @@ const CORS = {
 import { ocrWithProvider, normalizeId, PROVIDER_LABEL } from './ocr.js';
 import { XLSX_MIME } from './xlsx.js';
 import {
-  buildWorkbook, rangeParams, isYmd, bjToday, dayStartUtc,
+  buildWorkbook, rangeParams, isYmd, bjToday, dayStartUtc, loadPhotos,
   getMailConfig, setSetting, sendDigest, runScheduledDigest, logMail,
   fetchSurvey, fetchEmployees, bjDate,
 } from './report.js';
@@ -532,6 +532,7 @@ async function ocrKeys(request, env, url) {
 /* ---------------- GET /api/export：按日期区间导出 xlsx ----------------
  * type=survey|employee|all（默认 all，两块各一张工作表）
  * from / to：北京时间日期 YYYY-MM-DD，缺省=今天
+ * images=0：不嵌证件照（照片多、只要数据时用，导出快很多）
  */
 async function exportXlsx(request, env, url) {
   if (!env.DB) return json({ ok: false, error: '数据库未绑定' }, 500);
@@ -539,6 +540,7 @@ async function exportXlsx(request, env, url) {
 
   const type = String(url.searchParams.get('type') || 'all');
   const form = String(url.searchParams.get('form') || '');
+  const withImages = url.searchParams.get('images') !== '0';
   const { from, to, fromIso, toIso } = rangeParams(url);
 
   try {
@@ -546,7 +548,19 @@ async function exportXlsx(request, env, url) {
       type === 'employee' ? [] : fetchSurvey(env, fromIso, toIso, form),
       type === 'survey' ? [] : fetchEmployees(env, fromIso, toIso),
     ]);
-    const bytes = await buildWorkbook({ survey, employee });
+
+    let surveyPhotos = null;
+    let employeePhotos = null;
+    if (withImages) {
+      const [sp, ep] = await Promise.all([
+        survey.length ? loadPhotos(env, 'idcard', survey, 12 * 1024 * 1024) : null,
+        employee.length ? loadPhotos(env, 'employee', employee, 12 * 1024 * 1024) : null,
+      ]);
+      surveyPhotos = sp && sp.map;
+      employeePhotos = ep && ep.map;
+    }
+
+    const bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos });
     if (!bytes) return json({ ok: false, error: `${from} ~ ${to} 这个区间没有数据` }, 404);
 
     const label = type === 'employee' ? '员工信息登记' : (type === 'survey' ? '入职考察登记' : '招聘登记数据');

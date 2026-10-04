@@ -144,9 +144,55 @@ function colName(n) { // 1 -> A, 27 -> AA
   return s;
 }
 
+/* ---------- 图片：取尺寸（按比例缩放，别把证件照拉变形） ---------- */
+export function imageSize(bytes, ext) {
+  const b = bytes;
+  if (ext === 'png') {
+    if (b.length > 24 && b[0] === 0x89 && b[1] === 0x50) {
+      const w = ((b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19]) >>> 0;
+      const h = ((b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23]) >>> 0;
+      if (w && h) return { w, h };
+    }
+    return null;
+  }
+  // JPEG：扫 SOF 段（FFC0-FFCF，跳过 C4/C8/CC）
+  let i = 2;
+  while (i + 9 < b.length) {
+    if (b[i] !== 0xff) { i += 1; continue; }
+    const m = b[i + 1];
+    if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+    if (m === 0xda || m === 0xd9) break;
+    const len = (b[i + 2] << 8) | b[i + 3];
+    if (len < 2) break;
+    if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+      const h = (b[i + 5] << 8) | b[i + 6];
+      const w = (b[i + 7] << 8) | b[i + 8];
+      return (w && h) ? { w, h } : null;
+    }
+    i += 2 + len;
+  }
+  return null;
+}
+
+const IMG_BOX_W = 150;   // 表格里图片最大显示宽度（像素）
+const IMG_BOX_H = 100;   // 最大高度
+const EMU_PER_PX = 9525;
+
+function fitBox(bytes, ext) {
+  const size = imageSize(bytes, ext) || { w: 4, h: 3 };
+  const ratio = (size.w && size.h) ? size.w / size.h : 4 / 3;
+  let w = IMG_BOX_W;
+  let h = Math.round(w / ratio);
+  if (h > IMG_BOX_H) { h = IMG_BOX_H; w = Math.round(h * ratio); }
+  return { w: Math.max(w, 20), h: Math.max(h, 15) };
+}
+
+/* 单元格值写成 { img: { data: Uint8Array, ext: 'jpeg' } } → 该格留空，图片用 drawing 锚在这一格 */
+function isImg(v) { return !!(v && typeof v === 'object' && v.img && v.img.data); }
+
 function cellXml(ref, val, styleId) {
   const s = styleId ? ` s="${styleId}"` : '';
-  if (val == null || val === '') return s ? `<c r="${ref}"${s}/>` : '';
+  if (val == null || val === '' || isImg(val)) return s ? `<c r="${ref}"${s}/>` : '';
   if (typeof val === 'number' && isFinite(val)) return `<c r="${ref}"${s}><v>${val}</v></c>`;
   const text = xmlEsc(val);
   return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${text}</t></is></c>`;
@@ -154,13 +200,14 @@ function cellXml(ref, val, styleId) {
 
 function displayLen(v) {
   if (v == null) return 0;
+  if (isImg(v)) return Math.ceil(fitBox(v.img.data, v.img.ext || 'jpeg').w / 7); // 换算成字符宽
   const s = String(v);
   let len = 0;
   for (const ch of s) len += ch.charCodeAt(0) > 255 ? 2 : 1; // 中文按两个字符宽估
   return len;
 }
 
-function sheetXml(rows, maxCols) {
+function sheetXml(rows, maxCols, images, hasDrawing) {
   const cols = [];
   for (let c = 0; c < maxCols; c += 1) {
     let w = 8;
@@ -172,6 +219,13 @@ function sheetXml(rows, maxCols) {
     cols.push(`<col min="${c + 1}" max="${c + 1}" width="${width}" customWidth="1"/>`);
   }
 
+  // 有图的行必须给够行高，否则图片会被下面的行盖住
+  const rowHeight = new Map();
+  (images || []).forEach(im => {
+    const box = fitBox(im.data, im.ext || 'jpeg');
+    rowHeight.set(im.row, Math.max(rowHeight.get(im.row) || 0, box.h + 6));
+  });
+
   const body = rows.map((row, ri) => {
     const cells = [];
     for (let c = 0; c < maxCols; c += 1) {
@@ -179,19 +233,57 @@ function sheetXml(rows, maxCols) {
       const xml = cellXml(ref, row ? row[c] : '', ri === 0 ? 1 : 0);
       if (xml) cells.push(xml);
     }
-    return `<row r="${ri + 1}">${cells.join('')}</row>`;
+    const ht = rowHeight.get(ri);
+    const attrs = ht ? ` ht="${ht}" customHeight="1"` : '';
+    return `<row r="${ri + 1}"${attrs}>${cells.join('')}</row>`;
   }).join('');
 
   const lastRef = colName(Math.max(maxCols, 1)) + Math.max(rows.length, 1);
+  const drawing = hasDrawing ? '<drawing r:id="rId1"/>' : '';
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 <dimension ref="A1:${lastRef}"/>
 <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
 <sheetFormatPr defaultRowHeight="15"/>
 <cols>${cols.join('')}</cols>
 <sheetData>${body}</sheetData>
-<autoFilter ref="A1:${lastRef}"/>
+<autoFilter ref="A1:${lastRef}"/>${drawing}
 </worksheet>`;
+}
+
+/* 一张表里的所有图片 → drawing{n}.xml（oneCellAnchor，锚在目标单元格左上角） */
+function drawingXml(images) {
+  const pics = images.map((im, i) => {
+    const box = fitBox(im.data, im.ext || 'jpeg');
+    const cx = box.w * EMU_PER_PX;
+    const cy = box.h * EMU_PER_PX;
+    return '<xdr:oneCellAnchor>'
+      + `<xdr:from><xdr:col>${im.col}</xdr:col><xdr:colOff>19050</xdr:colOff><xdr:row>${im.row}</xdr:row><xdr:rowOff>9525</xdr:rowOff></xdr:from>`
+      + `<xdr:ext cx="${cx}" cy="${cy}"/>`
+      + '<xdr:pic><xdr:nvPicPr>'
+      + `<xdr:cNvPr id="${i + 1}" name="Picture ${i + 1}"/>`
+      + '<xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>'
+      + `<xdr:blipFill><a:blip r:embed="rId${i + 1}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>`
+      + `<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>`
+      + '</xdr:pic><xdr:clientData/></xdr:oneCellAnchor>';
+  }).join('');
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    + '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    + pics + '</xdr:wsDr>';
+}
+
+function drawingRelsXml(mediaNames) {
+  const rels = mediaNames.map((name, i) =>
+    `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/${name}"/>`);
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rels.join('') + '</Relationships>';
+}
+
+function sheetRelsXml(drawingIndex) {
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${drawingIndex}.xml"/>`
+    + '</Relationships>';
 }
 
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -212,6 +304,8 @@ function safeSheetName(name, idx) {
 
 /**
  * @param {Array<{name:string, rows:Array<Array<any>>}>} sheets
+ *   单元格值可以是字符串 / 数字 / 布尔，也可以是 { img: { data: Uint8Array, ext?: 'jpeg'|'png' } }
+ *   —— 图片会「原图」写进 xl/media/，并按等比缩放锚在该单元格位置。
  * @returns {Promise<Uint8Array>}
  */
 export async function buildXlsx(sheets) {
@@ -228,15 +322,49 @@ export async function buildXlsx(sheets) {
   const rels = [];
   const sheetTags = [];
   const files = [];
+  const media = [];        // { name, data }
+  const mediaTypes = new Set();
 
   clean.forEach((s, i) => {
     const n = i + 1;
+
+    // 先扫出这张表里所有图片，记下它们在哪个格
+    const images = [];
+    s.rows.forEach((row, ri) => {
+      (row || []).forEach((v, ci) => {
+        if (isImg(v)) images.push({ row: ri, col: ci, data: v.img.data, ext: v.img.ext || 'jpeg' });
+      });
+    });
+
     const maxCols = s.rows.reduce((m, r) => Math.max(m, (r || []).length), 1);
     types.push(`<Override PartName="/xl/worksheets/sheet${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`);
     rels.push(`<Relationship Id="rId${n}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${n}.xml"/>`);
     sheetTags.push(`<sheet name="${xmlEsc(safeSheetName(s.name, i))}" sheetId="${n}" r:id="rId${n}"/>`);
-    files.push({ name: `xl/worksheets/sheet${n}.xml`, data: sheetXml(s.rows, maxCols) });
+
+    let drawingIndex = null;
+    if (images.length) {
+      drawingIndex = n;
+      const names = [];
+      images.forEach(im => {
+        const ext = im.ext === 'png' ? 'png' : 'jpeg';
+        const name = `image${media.length + 1}.${ext}`;
+        media.push({ name, data: im.data });
+        mediaTypes.add(ext);
+        names.push(name);
+      });
+      types.push(`<Override PartName="/xl/drawings/drawing${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`);
+      files.push({ name: `xl/drawings/drawing${n}.xml`, data: drawingXml(images) });
+      files.push({ name: `xl/drawings/_rels/drawing${n}.xml.rels`, data: drawingRelsXml(names) });
+      files.push({ name: `xl/worksheets/_rels/sheet${n}.xml.rels`, data: sheetRelsXml(n) });
+    }
+
+    files.push({ name: `xl/worksheets/sheet${n}.xml`, data: sheetXml(s.rows, maxCols, images, !!drawingIndex) });
   });
+
+  mediaTypes.forEach(ext => {
+    types.push(`<Default Extension="${ext}" ContentType="image/${ext}"/>`);
+  });
+  media.forEach(m => files.push({ name: `xl/media/${m.name}`, data: m.data }));
 
   const styleId = clean.length + 1;
   rels.push(`<Relationship Id="rId${styleId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`);

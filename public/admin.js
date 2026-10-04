@@ -147,9 +147,10 @@
           <option value="survey">只要问卷答卷</option>
           <option value="employee">只要员工登记</option>
         </select>
+        <label><input type="checkbox" id="eximg" checked style="width:auto"> 嵌入证件照原图</label>
         <button class="btn" id="exxls">导出 Excel</button>
       </div>
-      <div class="hint" id="exmsg">真正的 .xlsx 文件（Excel / WPS / 手机都能直接打开），按提交时间筛选。</div>
+      <div class="hint" id="exmsg">真正的 .xlsx 文件（Excel / WPS / 手机都能直接打开），按提交时间筛选。勾选「嵌入证件照原图」时，身份证、银行卡、自拍照会按原图直接嵌在对应单元格里。</div>
     </div>`;
   }
 
@@ -171,14 +172,18 @@
     document.querySelector('#exxls').onclick = () => {
       if (!from.value || !to.value) { msg.textContent = '请选择开始和结束日期'; return; }
       const type = document.querySelector('#extype').value;
-      msg.textContent = '正在生成 Excel…';
-      fetch(`/api/export?token=${encodeURIComponent(token)}&type=${type}&from=${from.value}&to=${to.value}`)
+      const img = document.querySelector('#eximg').checked ? 1 : 0;
+      msg.textContent = img ? '正在取证件照并生成 Excel…（照片多时会慢一点）' : '正在生成 Excel…';
+      fetch(`/api/export?token=${encodeURIComponent(token)}&type=${type}&from=${from.value}&to=${to.value}&images=${img}`)
         .then(r => {
           const ct = r.headers.get('Content-Type') || '';
           if (ct.includes('json')) return r.json().then(j => { throw new Error(j.error || '导出失败'); });
-          return r.blob().then(b => ({ blob: b, name: `招聘登记数据_${from.value}_${to.value}.xlsx` }));
+          return r.blob().then(b => ({ blob: b, name: `招聘登记数据_${from.value}_${to.value}.xlsx`, size: b.size }));
         })
-        .then(o => { downloadBlob(o.blob, o.name); msg.textContent = '已导出：' + o.name; })
+        .then(o => {
+          downloadBlob(o.blob, o.name);
+          msg.textContent = `已导出：${o.name}（${(o.size / 1024 / 1024).toFixed(2)} MB）`;
+        })
         .catch(e => { msg.textContent = '导出失败：' + e.message; });
     };
   }

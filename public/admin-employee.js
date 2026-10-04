@@ -44,9 +44,10 @@
       '<button class="chip" data-q="week">近 7 天</button>' +
       '<button class="chip" data-q="month">本月</button>' +
       '<button class="chip" data-q="all">全部</button>' +
+      '<label style="margin-left:6px"><input type="checkbox" id="eximg" checked style="width:auto"> 嵌入证件照原图</label>' +
       '<button class="btn" id="xls">导出 Excel</button>' +
       '</div>' +
-      '<div class="hint" id="xlsmsg">导出的是真正的 .xlsx 表格（Excel / WPS / 手机都能直接打开），按登记时间筛选。</div>' +
+      '<div class="hint" id="xlsmsg">导出的是真正的 .xlsx 表格（Excel / WPS / 手机都能直接打开），按登记时间筛选；勾选后身份证、银行卡照片会以原图嵌在表格里。</div>' +
       '</div>';
   }
 
@@ -65,8 +66,8 @@
     });
     $('#xls').onclick = function () {
       if (!from.value || !to.value) { msg.textContent = '请选择开始和结束日期'; return; }
-      msg.textContent = '正在生成 Excel…';
-      exportXls(from.value, to.value, msg);
+      msg.textContent = '正在取证件照并生成 Excel…（照片多时会慢一点）';
+      exportXls(from.value, to.value, msg, $('#eximg').checked ? 1 : 0);
     };
   }
 
@@ -78,18 +79,18 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 3000);
   }
 
-  function exportXls(f, t, msg) {
-    fetch('/api/export?token=' + encodeURIComponent(token) + '&type=employee&from=' + f + '&to=' + t)
+  function exportXls(f, t, msg, images) {
+    fetch('/api/export?token=' + encodeURIComponent(token) + '&type=employee&from=' + f + '&to=' + t + '&images=' + (images === undefined ? 1 : images))
       .then(function (r) {
         var ct = r.headers.get('Content-Type') || '';
         if (ct.indexOf('json') >= 0) {
           return r.json().then(function (j) { throw new Error(j.error || '导出失败'); });
         }
-        return r.blob().then(function (b) { return { blob: b, name: '员工信息登记_' + f + '_' + t + '.xlsx' }; });
+        return r.blob().then(function (b) { return { blob: b, name: '员工信息登记_' + f + '_' + t + '.xlsx', size: b.size }; });
       })
       .then(function (o) {
         saveBlob(o.blob, o.name);
-        msg.textContent = '已导出：' + o.name;
+        msg.textContent = '已导出：' + o.name + '（' + (o.size / 1024 / 1024).toFixed(2) + ' MB）';
       })
       .catch(function (e) { msg.textContent = '导出失败：' + e.message; });
   }

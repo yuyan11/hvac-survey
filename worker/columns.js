@@ -13,9 +13,9 @@ export const SURVEY_FIELDS = [
   {"k":"phone","t":"tel","label":"本人手机号"},
   {"k":"wechat","t":"text","label":"微信号 / 备用联系方式"},
   {"k":"idcard","t":"text","label":"身份证号"},
-  {"k":"idcard_front","t":"photo","label":"身份证 · 人像面"},
-  {"k":"idcard_back","t":"photo","label":"身份证 · 国徽面"},
-  {"k":"selfie","t":"photo","label":"本人自拍照（正面半身）"},
+  {"k":"idcard_front","t":"photo","side":"front","label":"身份证 · 人像面"},
+  {"k":"idcard_back","t":"photo","side":"back","label":"身份证 · 国徽面"},
+  {"k":"selfie","t":"photo","side":"selfie","label":"本人自拍照（正面半身）"},
   {"k":"live_addr","t":"text","label":"现居住地址"},
   {"k":"is_local","t":"radio","label":"是否在本地长期居住"},
   {"k":"position","t":"checkbox","label":"应聘岗位"},
@@ -131,4 +131,4 @@ export const SURVEY_FIELDS = [
   {"k":"declare","t":"radio","label":"本人承诺以上填写内容真实有效，如有虚假愿承担相应责任"},
 ];
 
-export const EMPLOYEE_HEAD = ["编号","登记时间","姓名","手机号","身份证号","银行卡号","开户行","住址（OCR）","证件风险","照片"];
+export const EMPLOYEE_HEAD = ["编号","登记时间","姓名","手机号","身份证号","银行卡号","开户行","住址（OCR）","证件风险","来源渠道","身份证·人像面","身份证·国徽面","银行卡照片"];

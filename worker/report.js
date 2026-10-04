@@ -92,19 +92,71 @@ export function ocrText(raw) {
   return '号码不一致';
 }
 
+/* ---------------- 证件照：从 R2 取原图，嵌进表格单元格 ---------------- */
+const PHOTO_SIDES = ['front', 'back', 'selfie'];
+
+/**
+ * 批量取照片（并发 6，避免串行几十秒）。
+ * budgetBytes：整份表最多嵌多少字节的原图；超了就停手，剩下的行退回文字占位，防止把邮件撑爆
+ * @returns {Promise<{map: Map<number, {front?:Uint8Array,back?:Uint8Array,selfie?:Uint8Array}>, bytes: number, skipped: number}>}
+ */
+export async function loadPhotos(env, prefix, items, budgetBytes = 10 * 1024 * 1024) {
+  const map = new Map();
+  let bytes = 0;
+  let skipped = 0;
+  if (!env.IDCARDS || !items || !items.length) return { map, bytes, skipped };
+
+  const list = items.slice(0, 800);
+  const queue = list.slice();
+  const concurrency = Math.min(6, queue.length);
+
+  async function worker() {
+    for (;;) {
+      const it = queue.shift();
+      if (!it) return;
+      if (bytes >= budgetBytes) { skipped += 1; continue; }
+      const one = {};
+      for (const side of PHOTO_SIDES) {
+        if (bytes >= budgetBytes) break;
+        try {
+          const obj = await env.IDCARDS.get(`${prefix}/${it.id}_${side}.jpg`);
+          if (!obj) continue;
+          const buf = new Uint8Array(await obj.arrayBuffer());
+          if (!buf.length) continue;
+          if (bytes + buf.length > budgetBytes) { skipped += 1; break; }
+          bytes += buf.length;
+          one[side] = buf;
+        } catch (e) { /* 单张读失败不影响整体 */ }
+      }
+      if (Object.keys(one).length) map.set(it.id, one);
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  return { map, bytes, skipped };
+}
+
 /* ---------------- 表格拼装 ---------------- */
 const SURVEY_XLSX_HEAD = SURVEY_HEAD.slice(0, 4)
   .concat(['身份证核验'], SURVEY_FIELDS.map(f => f.label));
 
-export function surveySheet(items) {
+function imgCell(bytes) {
+  return bytes ? { img: { data: bytes, ext: 'jpeg' } } : '';
+}
+
+export function surveySheet(items, photos) {
   const rows = [SURVEY_XLSX_HEAD];
   (items || []).forEach(it => {
     const d = safeParse(it.payload);
+    const mine = photos && photos.get(it.id);
     const row = [it.id, bjDate(it.created_at), it.name || '', it.phone || '', ocrText(it.ocr)];
     SURVEY_FIELDS.forEach(f => {
       if (f.t === 'rows') {
         const arr = Array.isArray(d[f.from]) ? d[f.from] : [];
         row.push(arr.map(x => (x && x[f.col]) || '').filter(Boolean).join(' | '));
+      } else if (f.t === 'photo') {
+        // 有原图就直接嵌进单元格；读不到 / 超出体积预算时留空（不再写「已上传照片」那行字）
+        row.push(mine && mine[f.side] ? imgCell(mine[f.side]) : '');
       } else {
         row.push(fmtVal(d[f.k]));
       }
@@ -114,16 +166,20 @@ export function surveySheet(items) {
   return rows;
 }
 
-export function employeeSheet(items) {
+export function employeeSheet(items, photos) {
   const rows = [EMPLOYEE_HEAD];
   (items || []).forEach(it => {
     const p = safeParse(it.payload);
     const f = p.id_front || {};
+    const mine = photos && photos.get(it.id);
     rows.push([
       it.id, bjDate(it.created_at), it.name || '', it.phone || '',
       it.idcard || '', it.card_no || '', it.card_bank || '',
       f.address || '', f.riskType || '',
       (p._ref || ''),
+      mine && mine.front ? imgCell(mine.front) : '',
+      mine && mine.back ? imgCell(mine.back) : '',
+      mine && mine.selfie ? imgCell(mine.selfie) : '',
     ]);
   });
   return rows;
@@ -131,12 +187,13 @@ export function employeeSheet(items) {
 
 /**
  * 生成 xlsx：两块数据各一张表，空的那张自动不生成
+ * @param {{survey?:Array, employee?:Array, surveyPhotos?:Map, employeePhotos?:Map}} opts
  * @returns {Promise<Uint8Array|null>} 都没数据时返回 null
  */
-export async function buildWorkbook({ survey, employee, surveyName, employeeName }) {
+export async function buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, surveyName, employeeName }) {
   const sheets = [];
-  if (survey && survey.length) sheets.push({ name: surveyName || '入职与技能考察登记表', rows: surveySheet(survey) });
-  if (employee && employee.length) sheets.push({ name: employeeName || '员工信息登记', rows: employeeSheet(employee) });
+  if (survey && survey.length) sheets.push({ name: surveyName || '入职与技能考察登记表', rows: surveySheet(survey, surveyPhotos) });
+  if (employee && employee.length) sheets.push({ name: employeeName || '员工信息登记', rows: employeeSheet(employee, employeePhotos) });
   if (!sheets.length) return null;
   return buildXlsx(sheets);
 }
@@ -261,7 +318,7 @@ function digestHtml(fromLabel, toLabel, survey, employee) {
  * 生成并发送一期汇总。不判断是否需要发（由调用方决定）。
  * @returns {Promise<{ok:boolean, count:number, message:string}>}
  */
-export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, recipients, test }) {
+export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, recipients, test, withPhotos = true }) {
   const cfg = await getMailConfig(env);
   const to = recipients && recipients.length ? recipients : cfg.recipients;
   if (!to.length) return { ok: false, count: 0, message: '还没设置收件邮箱' };
@@ -273,7 +330,19 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
   const count = survey.length + employee.length;
   if (!count && !test) return { ok: true, count: 0, message: '区间内没有新增，跳过发送' };
 
-  const bytes = await buildWorkbook({ survey, employee });
+  // 邮件附件的总大小受 25MiB 限制（还要再 base64 膨胀 1/3），所以给图片单独留个更紧的预算
+  let surveyPhotos = null;
+  let employeePhotos = null;
+  if (withPhotos) {
+    const [sp, ep] = await Promise.all([
+      survey.length ? loadPhotos(env, 'idcard', survey, 6 * 1024 * 1024) : null,
+      employee.length ? loadPhotos(env, 'employee', employee, 6 * 1024 * 1024) : null,
+    ]);
+    surveyPhotos = sp && sp.map;
+    employeePhotos = ep && ep.map;
+  }
+
+  const bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos });
   const day = toLabel.slice(0, 10);
   const subject = test
     ? `【测试】暖通招聘登记 · ${day}（${survey.length} 份问卷 / ${employee.length} 份员工登记）`
@@ -285,7 +354,7 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
     from: cfg.from,
     fromName: cfg.fromName,
     html: digestHtml(fromLabel, toLabel, survey, employee),
-    text: `统计区间 ${fromLabel} → ${toLabel}：问卷 ${survey.length} 条，员工登记 ${employee.length} 条。完整数据见附件。`,
+    text: `统计区间 ${fromLabel} → ${toLabel}：问卷 ${survey.length} 条，员工登记 ${employee.length} 条。完整数据（证件照已嵌在表格里）见附件。`,
     attachment: bytes ? { content: bytes, filename: `survey-report-${day}.xlsx` } : null,
   });
 
