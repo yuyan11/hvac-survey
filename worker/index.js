@@ -198,15 +198,20 @@ async function verify(request, env) {
   const row = await env.DB.prepare('SELECT id, created_at, payload, ocr FROM submissions WHERE id = ?').bind(id).first();
   if (!row) return json({ ok: false, error: '记录不存在' }, 404);
 
+  // 管理员手动重核：跳过缓存与时间窗，强制重新识别（用于老答卷补核）
+  const url = new URL(request.url);
+  const isAdmin = adminOk(url, env);
+  const force = isAdmin && url.searchParams.get('force') === '1';
+
   // 已经核过就直接返回，避免重复消耗额度
-  if (row.ocr) {
+  if (row.ocr && !force) {
     try { return json({ ok: true, cached: true, ...JSON.parse(row.ocr) }); }
     catch (e) { /* 解析失败就重新核一次 */ }
   }
 
-  // 防刷：只对提交后 6 小时内的记录做核验
+  // 防刷：只对提交后 6 小时内的记录做核验（管理员可绕过）
   const age = Date.now() - new Date(row.created_at).getTime();
-  if (age > 6 * 3600 * 1000) return json({ ok: false, error: '已超过可核验时间' }, 403);
+  if (!isAdmin && age > 6 * 3600 * 1000) return json({ ok: false, error: '已超过可核验时间' }, 403);
 
   if (!env.IDCARDS) return json({ ok: false, error: '未绑定 R2 存储桶' }, 500);
   const obj = await env.IDCARDS.get(`idcard/${id}_front.jpg`);

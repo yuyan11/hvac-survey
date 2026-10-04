@@ -176,6 +176,8 @@
         html += `<figure><img src="/api/photo?token=${encodeURIComponent(token)}&id=${it.id}&side=${side}" alt="${esc(label)}"><figcaption>${esc(label)}</figcaption></figure>`;
       });
       html += `</div>`;
+      html += `<p style="margin-top:10px"><button class="btn gray" id="reverify">${o ? '重新核验身份证' : '核验身份证'}</button>
+        <span class="dim" id="rvmsg" style="margin-left:10px"></span></p>`;
     }
 
     (groups ? groups.groups : []).forEach(g => {
@@ -203,6 +205,26 @@
     html += `</div></div>`;
     box().innerHTML = html;
     document.querySelector('#back').onclick = loadList;
+
+    const rv = document.querySelector('#reverify');
+    if (rv) {
+      rv.onclick = async () => {
+        const msg = document.querySelector('#rvmsg');
+        rv.disabled = true; msg.textContent = '正在核验…';
+        try {
+          const rr = await fetch(`/api/verify?token=${encodeURIComponent(token)}&force=1`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: it.id }),
+          });
+          const rj = await rr.json();
+          if (!rj.ok) { msg.textContent = rj.error || '核验失败'; rv.disabled = false; return; }
+          showDetail(it.id);
+        } catch (e) {
+          msg.textContent = '核验失败：' + e.message;
+          rv.disabled = false;
+        }
+      };
+    }
   }
 
   /* ---------- CSV 导出 ---------- */
