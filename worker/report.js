@@ -92,8 +92,10 @@ export function ocrText(raw) {
   return '号码不一致';
 }
 
-/* ---------------- 证件照：从 R2 取原图，嵌进表格单元格 ---------------- */
-const PHOTO_SIDES = ['front', 'back', 'selfie'];
+/* ---------------- 证件照：从 R2 取原图，嵌进表格单元格 ----------------
+ * 员工侧的 selfie 是历史命名（存的是银行卡），face 才是自拍照；两边都取，取不到就留空
+ */
+const PHOTO_SIDES = ['front', 'back', 'selfie', 'face'];
 
 /**
  * 批量取照片（并发 6，避免串行几十秒）。
@@ -180,6 +182,7 @@ export function employeeSheet(items, photos) {
       mine && mine.front ? imgCell(mine.front) : '',
       mine && mine.back ? imgCell(mine.back) : '',
       mine && mine.selfie ? imgCell(mine.selfie) : '',
+      mine && mine.face ? imgCell(mine.face) : '',
     ]);
   });
   return rows;
@@ -269,7 +272,7 @@ function toBase64(bytes) {
   return btoa(bin);
 }
 
-export async function sendMail(env, { to, subject, html, text, from, fromName, attachment }) {
+export async function sendMail(env, { to, subject, html, text, from, fromName, attachment, extraAttachments }) {
   if (!env.EMAIL) {
     const e = new Error('Worker 还没绑定邮件发送（send_email 绑定名 EMAIL）');
     e.code = 'NO_BINDING';
@@ -282,14 +285,22 @@ export async function sendMail(env, { to, subject, html, text, from, fromName, a
     html,
     text,
   };
+  const list = [];
   if (attachment) {
-    msg.attachments = [{
+    list.push({
       content: toBase64(attachment.content),
       filename: attachment.filename,
       type: attachment.type || XLSX_MIME,
       disposition: 'attachment',
-    }];
+    });
   }
+  (extraAttachments || []).forEach(a => list.push({
+    content: typeof a.content === 'string' ? a.content : toBase64(a.data),
+    filename: a.filename,
+    type: a.type || 'application/octet-stream',
+    disposition: 'attachment',
+  }));
+  if (list.length) msg.attachments = list;
   return env.EMAIL.send(msg);
 }
 
@@ -318,7 +329,7 @@ function digestHtml(fromLabel, toLabel, survey, employee) {
  * 生成并发送一期汇总。不判断是否需要发（由调用方决定）。
  * @returns {Promise<{ok:boolean, count:number, message:string}>}
  */
-export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, recipients, test, withPhotos = true }) {
+export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, recipients, test, label, withPhotos = true, extraAttachments = null }) {
   const cfg = await getMailConfig(env);
   const to = recipients && recipients.length ? recipients : cfg.recipients;
   if (!to.length) return { ok: false, count: 0, message: '还没设置收件邮箱' };
@@ -345,7 +356,7 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
   const bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos });
   const day = toLabel.slice(0, 10);
   const subject = test
-    ? `【测试】暖通招聘登记 · ${day}（${survey.length} 份问卷 / ${employee.length} 份员工登记）`
+    ? `【测试${label ? '·' + label : ''}】暖通招聘登记 · ${day}（${survey.length} 份问卷 / ${employee.length} 份员工登记）`
     : `【暖通招聘】${day} 新增 ${survey.length} 份问卷 / ${employee.length} 份员工登记`;
 
   await sendMail(env, {
@@ -356,6 +367,7 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
     html: digestHtml(fromLabel, toLabel, survey, employee),
     text: `统计区间 ${fromLabel} → ${toLabel}：问卷 ${survey.length} 条，员工登记 ${employee.length} 条。完整数据（证件照已嵌在表格里）见附件。`,
     attachment: bytes ? { content: bytes, filename: `survey-report-${day}.xlsx` } : null,
+    extraAttachments,
   });
 
   return { ok: true, count, message: `已发送到 ${to.join('、')}` };

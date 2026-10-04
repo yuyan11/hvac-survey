@@ -83,6 +83,25 @@
       </div>
 
       <div class="group show">
+        <div class="grouptitle">本人自拍照（选填）</div>
+
+        <div class="field" data-field="selfie">
+          <div class="label">本人自拍照 <span class="opt">选填</span></div>
+          <div class="ctrl">
+            <div class="photobox" data-name="selfie" data-kind="none" data-side="face">
+              <div class="photobtns">
+                <label class="pbtn">选择照片<input type="file" accept="image/*" hidden></label>
+                <label class="pbtn">拍照上传<input type="file" accept="image/*" capture="user" hidden></label>
+              </div>
+              <div class="preview"><span class="ph">未上传</span></div>
+            </div>
+          </div>
+          <div class="hint">正面半身、光线明亮即可，用于核对确实是本人；不拍也能直接提交</div>
+          <div class="err"></div>
+        </div>
+      </div>
+
+      <div class="group show">
         <div class="grouptitle">工资卡（选填）</div>
 
         <div class="field" data-field="card">

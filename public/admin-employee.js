@@ -178,7 +178,7 @@
         var p = it.payload || {};
         var idFront = p.id_front || {}, idBack = p.id_back || {}, card = p.card_ocr || {};
         var figs = '';
-        [['front', '身份证 · 人像面'], ['back', '身份证 · 国徽面'], ['selfie', '银行卡']].forEach(function (x) {
+        [['front', '身份证 · 人像面'], ['back', '身份证 · 国徽面'], ['selfie', '银行卡'], ['face', '本人自拍照']].forEach(function (x) {
           // 银行卡是选填的：没有这张就加载失败，直接隐藏这个图位
           figs += '<figure><img src="/api/employee/photo?token=' + encodeURIComponent(token) +
             '&id=' + it.id + '&side=' + x[0] + '" alt="' + x[1] +

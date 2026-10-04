@@ -14,7 +14,7 @@ const CORS = {
 import { ocrWithProvider, normalizeId, PROVIDER_LABEL } from './ocr.js';
 import { XLSX_MIME } from './xlsx.js';
 import {
-  buildWorkbook, rangeParams, isYmd, bjToday, dayStartUtc, loadPhotos,
+  buildWorkbook, rangeParams, isYmd, bjToday, dayStartUtc, dayEndUtc, loadPhotos,
   getMailConfig, setSetting, sendDigest, runScheduledDigest, logMail,
   fetchSurvey, fetchEmployees, bjDate,
 } from './report.js';
@@ -415,12 +415,18 @@ async function employeeResults(request, env, url) {
   }
 }
 
+/* 员工照片的三种槽位：
+ *   front = 身份证人像面, back = 国徽面, selfie = 银行卡（历史命名，老数据的银行卡就存在 _selfie.jpg，别改）,
+ *   face   = 本人自拍照（新增，选填）
+ */
+const EMPLOYEE_SIDES = ['front', 'back', 'selfie', 'face'];
+
 async function employeePhoto(request, env, url) {
   if (!adminOk(url, env)) return new Response('口令错误', { status: 401 });
   if (!env.IDCARDS) return new Response('未绑定 R2 存储桶', { status: 500 });
   const id = String(url.searchParams.get('id') || '');
   const side = String(url.searchParams.get('side') || '');
-  if (!/^\d+$/.test(id) || !['front', 'back', 'selfie'].includes(side)) {
+  if (!/^\d+$/.test(id) || !EMPLOYEE_SIDES.includes(side)) {
     return new Response('参数无效', { status: 400 });
   }
   try {
@@ -446,7 +452,7 @@ async function employeeUpload(request, env) {
   const side = String(form.get('side') || '');
   const file = form.get('file');
   if (!/^\d{1,12}$/.test(id)) return json({ ok: false, error: '编号无效' }, 400);
-  if (!['front', 'back', 'selfie'].includes(side)) return json({ ok: false, error: '照片类型无效' }, 400);
+  if (!EMPLOYEE_SIDES.includes(side)) return json({ ok: false, error: '照片类型无效' }, 400);
   if (!file || typeof file === 'string') return json({ ok: false, error: '未收到图片' }, 400);
   if (!/^image\//.test(file.type || '')) return json({ ok: false, error: '仅支持图片文件' }, 400);
   if (file.size > 8 * 1024 * 1024) return json({ ok: false, error: '图片超过 8MB' }, 400);
@@ -640,11 +646,25 @@ async function mailTest(request, env, url) {
   const fromIso = useRange ? dayStartUtc(b.from) : new Date(Date.now() - 7 * 86400000).toISOString();
   const toIso = useRange ? dayEndUtc(b.to) : new Date().toISOString();
 
+  // 临时开关：pad=<MB> 时额外挂一个「不可压缩的随机字节」填充附件，用来实测邮件体积上限
+  const padMb = Number(b.pad || 0);
+  let extraAttachments = null;
+  if (padMb > 0 && padMb <= 60) {
+    const n = Math.round(padMb * 1024 * 1024);
+    const buf = new Uint8Array(n);
+    for (let off = 0; off < n; off += 65536) {
+      crypto.getRandomValues(buf.subarray(off, Math.min(off + 65536, n)));
+    }
+    extraAttachments = [{ data: buf, filename: `pad-${padMb}MB.bin`, type: 'application/octet-stream' }];
+  }
+
   try {
     const res = await sendDigest(env, {
       fromIso, toIso,
       fromLabel: bjDate(fromIso), toLabel: bjDate(toIso),
       recipients, test: true,
+      label: padMb ? `附件 ${padMb}MB` : '',
+      extraAttachments,
     });
     await logMail(env, {
       to: recipients.join(','), subject: useRange ? `手动发送 ${b.from}~${b.to}` : '手动发送（最近 7 天）',

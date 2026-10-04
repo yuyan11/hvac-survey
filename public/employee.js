@@ -148,7 +148,12 @@
 
         // 只有「有号码要读」的字段才调 OCR，省额度：
         //   身份证人像面 → 读身份证号；银行卡 → 读卡号/开户行
-        //   身份证国徽面没有号码可读 → 不调 OCR，只本地保存
+        //   身份证国徽面没有号码可读、自拍照更没得读 → 不调 OCR，只本地保存
+        if (kind === 'none') {
+          ocrLine(name, '已保存（不需要识别）');
+          toast('');
+          return;
+        }
         if (kind === 'idcard' && side === 'back') {
           ocrLine(name, '国徽面已保存（不需要识别）');
           toast('');
@@ -314,9 +319,11 @@
       var j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || '提交失败');
 
-      var sides = { front: 'front', back: 'back', card: 'selfie' };
+      // side 命名说明：银行卡那格复用历史上的 'selfie'（老数据就存在 employee/{id}_selfie.jpg），
+      // 自拍照用 'face'，两边互不影响
+      var sides = { front: 'front', back: 'back', card: 'selfie', selfie: 'face' };
       var up = 0, upFail = 0;
-      for (var nm of ['front', 'back', 'card']) {
+      for (var nm of ['front', 'back', 'selfie', 'card']) {
         if (!state.files[nm]) continue;
         var fd = new FormData();
         fd.append('id', String(j.id));
@@ -343,5 +350,5 @@
     }
   });
 
-  refresh('front'); refresh('back'); refresh('card');
+  refresh('front'); refresh('back'); refresh('selfie'); refresh('card');
 })();
