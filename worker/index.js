@@ -646,17 +646,9 @@ async function mailTest(request, env, url) {
   const fromIso = useRange ? dayStartUtc(b.from) : new Date(Date.now() - 7 * 86400000).toISOString();
   const toIso = useRange ? dayEndUtc(b.to) : new Date().toISOString();
 
-  // 临时开关：pad=<MB> 时额外挂一个「不可压缩的随机字节」填充附件，用来实测邮件体积上限
+  // 临时开关：pad=<MB> 时把一段不可压缩的随机字节塞进 xlsx，用来实测邮件体积上限
   const padMb = Number(b.pad || 0);
-  let extraAttachments = null;
-  if (padMb > 0 && padMb <= 60) {
-    const n = Math.round(padMb * 1024 * 1024);
-    const buf = new Uint8Array(n);
-    for (let off = 0; off < n; off += 65536) {
-      crypto.getRandomValues(buf.subarray(off, Math.min(off + 65536, n)));
-    }
-    extraAttachments = [{ data: buf, filename: `pad-${padMb}MB.bin`, type: 'application/octet-stream' }];
-  }
+  const padBytes = (padMb > 0 && padMb <= 60) ? Math.round(padMb * 1024 * 1024) : 0;
 
   try {
     const res = await sendDigest(env, {
@@ -664,7 +656,8 @@ async function mailTest(request, env, url) {
       fromLabel: bjDate(fromIso), toLabel: bjDate(toIso),
       recipients, test: true,
       label: padMb ? `附件 ${padMb}MB` : '',
-      extraAttachments,
+      padBytes,
+      withPhotos: !padBytes,   // 实测体积时不再叠照片，避免多个变量
     });
     await logMail(env, {
       to: recipients.join(','), subject: useRange ? `手动发送 ${b.from}~${b.to}` : '手动发送（最近 7 天）',

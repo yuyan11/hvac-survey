@@ -193,10 +193,14 @@ export function employeeSheet(items, photos) {
  * @param {{survey?:Array, employee?:Array, surveyPhotos?:Map, employeePhotos?:Map}} opts
  * @returns {Promise<Uint8Array|null>} 都没数据时返回 null
  */
-export async function buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, surveyName, employeeName }) {
+export async function buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, surveyName, employeeName, fillerBytes }) {
   const sheets = [];
   if (survey && survey.length) sheets.push({ name: surveyName || '入职与技能考察登记表', rows: surveySheet(survey, surveyPhotos) });
   if (employee && employee.length) sheets.push({ name: employeeName || '员工信息登记', rows: employeeSheet(employee, employeePhotos) });
+  // 仅用于实测邮件体积上限：塞一段不可压缩的随机字节当「图片」，让附件体积可控
+  if (fillerBytes) {
+    sheets.push({ name: '体积填充', rows: [['填充'], [{ img: { data: fillerBytes, ext: 'jpeg' } }]] });
+  }
   if (!sheets.length) return null;
   return buildXlsx(sheets);
 }
@@ -272,7 +276,16 @@ function toBase64(bytes) {
   return btoa(bin);
 }
 
-export async function sendMail(env, { to, subject, html, text, from, fromName, attachment, extraAttachments }) {
+/* 随机字节：用于实测邮件体积上限（不可压缩，才能真实撑出体积） */
+export function randomBytes(n) {
+  const buf = new Uint8Array(n);
+  for (let off = 0; off < n; off += 65536) {
+    crypto.getRandomValues(buf.subarray(off, Math.min(off + 65536, n)));
+  }
+  return buf;
+}
+
+export async function sendMail(env, { to, subject, html, text, from, fromName, attachment }) {
   if (!env.EMAIL) {
     const e = new Error('Worker 还没绑定邮件发送（send_email 绑定名 EMAIL）');
     e.code = 'NO_BINDING';
@@ -285,22 +298,14 @@ export async function sendMail(env, { to, subject, html, text, from, fromName, a
     html,
     text,
   };
-  const list = [];
   if (attachment) {
-    list.push({
+    msg.attachments = [{
       content: toBase64(attachment.content),
       filename: attachment.filename,
       type: attachment.type || XLSX_MIME,
       disposition: 'attachment',
-    });
+    }];
   }
-  (extraAttachments || []).forEach(a => list.push({
-    content: typeof a.content === 'string' ? a.content : toBase64(a.data),
-    filename: a.filename,
-    type: a.type || 'application/octet-stream',
-    disposition: 'attachment',
-  }));
-  if (list.length) msg.attachments = list;
   return env.EMAIL.send(msg);
 }
 
@@ -329,7 +334,7 @@ function digestHtml(fromLabel, toLabel, survey, employee) {
  * 生成并发送一期汇总。不判断是否需要发（由调用方决定）。
  * @returns {Promise<{ok:boolean, count:number, message:string}>}
  */
-export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, recipients, test, label, withPhotos = true, extraAttachments = null }) {
+export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, recipients, test, label, withPhotos = true, padBytes = 0 }) {
   const cfg = await getMailConfig(env);
   const to = recipients && recipients.length ? recipients : cfg.recipients;
   if (!to.length) return { ok: false, count: 0, message: '还没设置收件邮箱' };
@@ -339,7 +344,7 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
     fetchEmployees(env, fromIso, toIso),
   ]);
   const count = survey.length + employee.length;
-  if (!count && !test) return { ok: true, count: 0, message: '区间内没有新增，跳过发送' };
+  if (!count && !test && !padBytes) return { ok: true, count: 0, message: '区间内没有新增，跳过发送' };
 
   // 邮件附件的总大小受 25MiB 限制（还要再 base64 膨胀 1/3），所以给图片单独留个更紧的预算
   let surveyPhotos = null;
@@ -353,7 +358,8 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
     employeePhotos = ep && ep.map;
   }
 
-  const bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos });
+  const fillerBytes = padBytes ? randomBytes(padBytes) : null;
+  const bytes = await buildWorkbook({ survey, employee, surveyPhotos, employeePhotos, fillerBytes });
   const day = toLabel.slice(0, 10);
   const subject = test
     ? `【测试${label ? '·' + label : ''}】暖通招聘登记 · ${day}（${survey.length} 份问卷 / ${employee.length} 份员工登记）`
@@ -367,7 +373,6 @@ export async function sendDigest(env, { fromIso, toIso, fromLabel, toLabel, reci
     html: digestHtml(fromLabel, toLabel, survey, employee),
     text: `统计区间 ${fromLabel} → ${toLabel}：问卷 ${survey.length} 条，员工登记 ${employee.length} 条。完整数据（证件照已嵌在表格里）见附件。`,
     attachment: bytes ? { content: bytes, filename: `survey-report-${day}.xlsx` } : null,
-    extraAttachments,
   });
 
   return { ok: true, count, message: `已发送到 ${to.join('、')}` };
