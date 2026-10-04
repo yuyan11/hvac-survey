@@ -69,6 +69,21 @@
     }
   }
 
+  /* ---------- 身份证自动核验状态 ---------- */
+  function parseOcr(s) {
+    if (!s) return null;
+    try { return JSON.parse(s); } catch (e) { return null; }
+  }
+  function ocrStatus(r) {
+    const o = parseOcr(r && r.ocr);
+    if (!o) return { cls: 'gray', text: '未核验' };
+    if (o.notId) return { cls: 'bad', text: '非身份证' };
+    if (o.matched) return { cls: 'ok', text: '号码一致' };
+    if (!o.num) return { cls: 'warn', text: '未读出号码' };
+    return { cls: 'warn', text: '号码不一致' };
+  }
+  function badge(s) { return `<span class="badge ${s.cls}">${esc(s.text)}</span>`; }
+
   function renderList(list) {
     box().innerHTML = `
       <h2>答卷列表</h2>
@@ -81,16 +96,17 @@
       </div>
       <div class="tblwrap">
         <table>
-          <thead><tr><th>编号</th><th>姓名/队伍</th><th>电话</th><th>来源</th><th>提交时间</th><th>操作</th></tr></thead>
+          <thead><tr><th>编号</th><th>姓名/队伍</th><th>电话</th><th>来源</th><th>身份证核验</th><th>提交时间</th><th>操作</th></tr></thead>
           <tbody>
             ${list.length ? list.map(r => `<tr>
               <td>${r.id}</td>
               <td>${esc(r.name || '—')}</td>
               <td>${esc(r.phone || '—')}</td>
               <td>${esc(r.ref || '—')}</td>
+              <td>${badge(ocrStatus(r))}</td>
               <td>${esc(localTime(r.created_at))}</td>
               <td><button class="linkbtn" data-id="${r.id}">查看详情</button></td>
-            </tr>`).join('') : `<tr><td colspan="6" class="empty">暂无数据</td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="7" class="empty">暂无数据</td></tr>`}
           </tbody>
         </table>
       </div>`;
@@ -130,6 +146,23 @@
         <div>年龄</div><div>${d._age != null ? esc(d._age) + ' 岁' : '—'}</div>
         ${d._ref ? `<div>来源渠道</div><div>${esc(d._ref)}</div>` : ''}
       </div>`;
+    }
+
+    const o = parseOcr(it.ocr);
+    if (o) {
+      const rows = [];
+      if (o.notId) {
+        rows.push(`<div>核验结果</div><div><span class="badge bad">不是身份证</span> ${esc(o.reason || '')}</div>`);
+      } else {
+        rows.push(`<div>核验结果</div><div>${badge(ocrStatus(it))}<span class="dim"> ${esc(o.providerLabel || '')}</span></div>`);
+        if (o.num) rows.push(`<div>照片上的号码</div><div>${esc(o.num)}</div>`);
+        if (o.typed) rows.push(`<div>表单填的号码</div><div>${esc(o.typed)}</div>`);
+        if (o.name) rows.push(`<div>照片上的姓名</div><div>${esc(o.name)}</div>`);
+        if (o.imageStatus && o.imageStatus !== 'normal') rows.push(`<div>图像质量</div><div>${esc(o.imageStatus)}</div>`);
+        if (o.riskType && o.riskType !== 'normal') rows.push(`<div>翻拍风险</div><div>${esc(o.riskType)}</div>`);
+      }
+      if (o.at) rows.push(`<div>核验时间</div><div>${esc(localTime(o.at))}</div>`);
+      html += `<h3>身份证自动核验</h3><div class="kv">${rows.join('')}</div>`;
     }
 
     const imgs = [

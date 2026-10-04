@@ -1,7 +1,7 @@
 /* 表单渲染引擎：条件分支 / 校验 / 提交 */
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
-  const state = { formId: null, values: {}, files: {} };
+  const state = { formId: null, values: {}, files: {}, ocr: {} };
 
   /* ---------- 工具 ---------- */
   function esc(s) {
@@ -188,14 +188,12 @@
     if (m.sd < 10) return { ok: false, msg: '画面几乎是一片空白，请对准要拍的东西重拍' };
 
     if (kind === 'idcard') {
-      // 身份证是横向的（85.6×54mm，约 1.59:1）；竖着拍基本都是拍错了
-      if (m.ratio < 1.15) return { ok: false, msg: '身份证要横着拍，请横过手机正对身份证重拍' };
-      if (m.ratio > 2.7) return { ok: false, msg: '画面太窄长，请正对身份证、让它占满画面' };
+      // 手机竖着拍、卡片横在画面里是最常见的拍法，方向交给 OCR 判断，这里只挡极端长条（多是截屏或拍歪）
+      if (m.ratio > 3.2 || m.ratio < 0.32) {
+        return { ok: false, msg: '画面太窄长，请正对身份证、让它占满画面重拍' };
+      }
       if (m.long < 700) return { ok: false, msg: '身份证照片太小，请靠近拍，让卡片占满画面' };
       if (m.sd < 18) return { ok: false, msg: '画面太平，不像身份证（上面有文字和图案），请重拍' };
-      if (m.ratio < 1.25 || m.ratio > 2.15) {
-        return { ok: true, warn: '已保存，但建议正对身份证拍满画面，方便核对' };
-      }
     }
 
     if (kind === 'face') {
@@ -236,8 +234,46 @@
       state.files[name] = { blob: blob, url: URL.createObjectURL(blob), size: blob.size };
       refreshPhoto(name);
       toast('');
+
+      // 是身份证的话，当场送 OCR 判一次：不是证件就直接退回，不让它走到提交
+      if (kind === 'idcard') {
+        toast('正在识别证件…');
+        const j = await ocrCheck(blob, 'idcard', f.side || 'front');
+        if (j && j.code === 'notid') {
+          URL.revokeObjectURL(state.files[name].url);
+          delete state.files[name];
+          if (state.ocr) delete state.ocr[name];
+          refreshPhoto(name);
+          if (fieldEl) fieldEl.classList.add('bad');
+          if (errEl) errEl.textContent = j.error || '这张不像身份证，请重拍';
+          toast(j.error || '这张不像身份证，请重拍');
+          return;
+        }
+        if (j && j.ok && state.ocr) state.ocr[name] = j.result;
+        toast(j && j.ok ? '证件已识别' : '（未能自动识别，稍后人工核对）');
+      }
     } catch (e) {
       toast('图片处理失败：' + e.message);
+    }
+  }
+
+  /* 调后端 OCR（失败不抛错，返回 null 表示稍后人工核对） */
+  async function ocrCheck(blob, kind, side) {
+    try {
+      const b64 = await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onerror = () => rej(new Error('读取失败'));
+        fr.onload = () => res(String(fr.result).split(',')[1]);
+        fr.readAsDataURL(blob);
+      });
+      const r = await fetch('/api/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: kind, side: side, image: b64 }),
+      });
+      return await r.json();
+    } catch (e) {
+      return null;
     }
   }
 
@@ -322,6 +358,7 @@
           URL.revokeObjectURL(state.files[name].url);
           delete state.files[name];
         }
+        delete state.ocr[name];
         refreshPhoto(name);
         return;
       }
@@ -549,7 +586,10 @@
       });
       const j = await r.json();
       if (j && j.ok) {
-        if (j.matched) {
+        if (j.notId) {
+          line.className = 'warn';
+          line.textContent = '这张照片没识别出身份证（' + (j.reason || '可能拍的不是身份证') + '），请确认上传的是身份证人像面';
+        } else if (j.matched) {
           line.className = 'dim';
           line.textContent = `身份证已自动核验通过（${esc(j.providerLabel || 'OCR')}）`;
         } else if (!j.num) {

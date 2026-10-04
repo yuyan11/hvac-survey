@@ -329,6 +329,11 @@ tr:hover td { background: #fafbfe; }
 .empty { padding: 30px; text-align: center; color: var(--dim); }
 .mask { background: #fffbe9; }
 .linkbtn { background: none; border: 0; color: var(--brand); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+.badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 12px; line-height: 1.5; white-space: nowrap; }
+.badge.ok { background: #e4f6ea; color: #17803d; }
+.badge.warn { background: #fdf0dc; color: #9a5b00; }
+.badge.bad { background: #fce9e9; color: #b3261e; }
+.badge.gray { background: #eef1f5; color: #666; }
 
 @media (max-width: 640px) {
   .brand h1 { font-size: 15.5px; }

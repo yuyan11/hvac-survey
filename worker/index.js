@@ -95,8 +95,8 @@ async function results(request, env) {
     let list;
     try {
       const cols = full
-        ? 'id, form, created_at, name, phone, payload'
-        : "id, form, created_at, name, phone, COALESCE(json_extract(payload,'$._ref'),'') AS ref";
+        ? 'id, form, created_at, name, phone, payload, ocr'
+        : "id, form, created_at, name, phone, COALESCE(json_extract(payload,'$._ref'),'') AS ref, ocr";
       const sql = form
         ? `SELECT ${cols} FROM submissions WHERE form = ? ORDER BY id DESC LIMIT 500`
         : `SELECT ${cols} FROM submissions ORDER BY id DESC LIMIT 500`;
@@ -106,8 +106,8 @@ async function results(request, env) {
     } catch (e) {
       // 运行环境不支持 JSON 函数时降级，列表不显示来源
       const sql = form
-        ? 'SELECT id, form, created_at, name, phone FROM submissions WHERE form = ? ORDER BY id DESC LIMIT 500'
-        : 'SELECT id, form, created_at, name, phone FROM submissions ORDER BY id DESC LIMIT 500';
+        ? 'SELECT id, form, created_at, name, phone, ocr FROM submissions WHERE form = ? ORDER BY id DESC LIMIT 500'
+        : 'SELECT id, form, created_at, name, phone, ocr FROM submissions ORDER BY id DESC LIMIT 500';
       const stmt = form ? env.DB.prepare(sql).bind(form) : env.DB.prepare(sql);
       const r = await stmt.all();
       list = (r.results || []).map(x => Object.assign({ ref: '' }, x));
@@ -242,6 +242,8 @@ async function verify(request, env) {
         name: r.name || '',
         typed: typed,
         matched: matched,
+        imageStatus: r.imageStatus || '',
+        riskType: r.riskType || '',
         at: now,
       };
       await env.DB.prepare('UPDATE ocr_keys SET fail_count = 0, updated_at = ? WHERE id = ?').bind(now, k.id).run();
@@ -249,7 +251,19 @@ async function verify(request, env) {
       return json(result);
     } catch (e) {
       const msg = (e && e.message) || String(e);
-      tried.push({ provider: k.provider, error: msg.slice(0, 140) });
+      tried.push({ provider: k.provider, code: (e && e.code) || '', error: msg.slice(0, 140) });
+      // 「不是身份证 / 复印件 / 截图」是确定结论，直接落库并返回，别再换账号白耗额度
+      if (e && e.notid) {
+        const now = new Date().toISOString();
+        const denied = {
+          ok: true, notId: true, provider: k.provider,
+          providerLabel: PROVIDER_LABEL[k.provider] || k.provider,
+          num: '', name: '', typed: typed, matched: false,
+          reason: msg, at: now,
+        };
+        await env.DB.prepare('UPDATE submissions SET ocr = ? WHERE id = ?').bind(JSON.stringify(denied), id).run();
+        return json(denied);
+      }
       if (e && e.quota) {
         await env.DB.prepare('UPDATE ocr_keys SET exhausted_month = ?, updated_at = ? WHERE id = ?')
           .bind(m, new Date().toISOString(), k.id).run();
@@ -323,7 +337,7 @@ async function ocrNow(request, env) {
       return json({ ok: true, provider: k.provider, providerLabel: PROVIDER_LABEL[k.provider] || k.provider, result: r });
     } catch (e) {
       const msg = (e && e.message) || String(e);
-      tried.push({ provider: k.provider, error: msg.slice(0, 140) });
+      tried.push({ provider: k.provider, code: (e && e.code) || '', error: msg.slice(0, 140) });
       if (e && e.quota) {
         await env.DB.prepare('UPDATE ocr_keys SET exhausted_month = ?, updated_at = ? WHERE id = ?')
           .bind(m, new Date().toISOString(), k.id).run();
@@ -333,7 +347,8 @@ async function ocrNow(request, env) {
       if (e && e.notid) break; // 「这不是身份证」属于业务问题，换账号也没用，直接返回
     }
   }
-  return json({ ok: false, error: (tried[0] && tried[0].error) || '识别失败', tried }, 200);
+  const first = tried[0] || {};
+  return json({ ok: false, code: first.code || 'fail', error: first.error || '识别失败', tried }, 200);
 }
 
 /* ---------------- 员工信息登记表：独立表 / 独立 key 前缀 / 独立后台 ----------------

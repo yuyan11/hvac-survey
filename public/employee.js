@@ -97,8 +97,10 @@
     if (m.mean > 246) return '画面过曝/反光严重，换个角度重拍';
     if (m.sd < 10) return '画面几乎一片空白，请对准证件重拍';
     if (kind === 'idcard') {
-      if (m.w / m.h < 1.15) return '证件要横着拍，请横过手机正对证件重拍';
-      if (m.w / m.h > 2.7) return '画面太窄长，请正对证件、让它占满画面';
+      // 竖拍/横拍都允许（手机竖着拿、卡片横在画面里最常见），方向交给 OCR 判断，
+      // 这里只挡极端长条——多半是截屏、拍歪或者只拍到卡片一角
+      var ratio = m.w / m.h;
+      if (ratio > 3.2 || ratio < 0.32) return '画面太窄长，请正对证件、让它占满画面重拍';
     }
     return '';
   }
@@ -159,6 +161,18 @@
 
   function applyOcr(name, kind, j) {
     if (!j || !j.ok) {
+      // 「识别出来不是证件」是确定性的结论 → 直接退回，让用户重拍
+      if (j && j.code === 'notid') {
+        if (state.files[name] && state.files[name].url) URL.revokeObjectURL(state.files[name].url);
+        delete state.files[name];
+        delete state.ocr[name];
+        refresh(name);
+        bad(name, true);
+        errOf(name).textContent = j.error || '这张不像证件，请重拍';
+        ocrLine(name, j.error || '这张不像证件，请重拍', 'warn');
+        toast(j.error || '这张不像证件，请重拍');
+        return;
+      }
       ocrLine(name, (j && j.error) || '识别失败', 'warn');
       return;
     }

@@ -102,7 +102,9 @@ function pickText(obj, keys) {
 /* 把各种错误归一：额度类问题统一打 ERR_QUOTA 标记 */
 function fail(kind, msg) {
   const e = new Error((kind === 'quota' ? 'ERR_QUOTA ' : '') + msg);
-  e.quota = kind === 'quota';
+  e.code = kind;                        // auth / api / quota / notid
+  e.quota = kind === 'quota';           // 额度用尽：本月停用该账号
+  e.notid = kind === 'notid';           // 业务问题（不是证件）：换账号也没用，直接短路
   return e;
 }
 
